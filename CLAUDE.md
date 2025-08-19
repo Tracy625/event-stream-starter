@@ -5,11 +5,18 @@
 - Read `/docs/STATUS.md` to know current progress, today's tasks, and acceptance criteria.
 - Read `/docs/WORKFLOW.md` to follow the mixed-mode kickoff process
 - Do not start coding before confirming understanding of both files.
+- Read `/docs/WORKFLOW.md` "One-click Demo & Migrations" section before running any DB-related tasks.
 
 ## Guardrails
 - Do **not** delete/rename/move files/dirs **unless I explicitly say**: "delete <file>" or "move <file> to <dir>".
 - Show all changes as diffs. Never auto-apply or run bulk refactors.
 - Keep responses concise: plan (≤5 bullets) → diffs → run/test notes.
+
+## DB Invariants
+- SQL fragments must import as: `from sqlalchemy import text as sa_text`. 裸 `text(...)` 禁止使用，避免与列名冲突。
+- `events` 表使用 `start_ts` 与 `last_ts`。任何查询按 `last_ts` 排序；代码中不得引用不存在的 `ts` 列。
+- `api/main.py` 顶层禁止任何 DB 相关导入或初始化。健康检查 `/healthz` 必须纯返回 200。
+- 所有数据库迁移操作必须通过 **`make migrate` / `make revision`** 触发，禁止直接编写 `docker compose exec ... alembic` 命令。
 
 ## Tech & Repo
 - Stack: FastAPI + Celery + Postgres + Redis; Next.js skeleton only.

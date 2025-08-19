@@ -1,35 +1,54 @@
-.PHONY: help up down logs test demo seed clean
+.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest
 
 help:
-	@echo "Available targets:"
-	@echo "  up      - Start all services (docker-compose up -d)"
-	@echo "  down    - Stop all services (docker-compose down)"
-	@echo "  logs    - Tail logs from all services"
-	@echo "  test    - Run test suite"
-	@echo "  demo    - Run demo/example workflow"
-	@echo "  seed    - Seed database with sample data"
-	@echo "  clean   - Clean up temporary files and caches"
+	@echo "Targets:"
+	@echo "  up/down/logs       - manage docker compose services"
+	@echo "  migrate/revision   - Alembic apply / create new revision (use m=\"message\")"
+	@echo "  demo               - run demo_ingest.py inside api container"
+	@echo "  dbtest             - quick DB insert/upsert smoke test"
+	@echo "  api/worker         - run services locally (placeholder)"
+	@echo "  test/seed          - run tests / seed database (placeholder)"
+	@echo "  clean              - clean up temporary files and caches"
 
 up:
 	@echo "Starting services..."
-	# docker-compose up -d
+	cd infra && docker compose up -d --build
 
 down:
 	@echo "Stopping services..."
-	# docker-compose down
+	cd infra && docker compose down
 
 logs:
 	@echo "Tailing logs..."
-	# docker-compose logs -f
+	cd infra && docker compose logs -f
+
+api:
+	@echo "Starting API server..."
+	# uvicorn api.main:app --reload
+
+worker:
+	@echo "Starting Celery worker..."
+	# celery -A worker.app worker --loglevel=info
+
+# ----- Alembic -----
+migrate:
+	@echo "Running alembic upgrade head inside api container..."
+	cd infra && docker compose exec -T api sh -c 'cd /app/api && alembic upgrade head'
+
+revision:
+	@if [ -z "$(m)" ]; then echo 'Usage: make revision m="your message"'; exit 1; fi
+	@echo "Creating alembic revision: $(m)"
+	cd infra && docker compose exec -T api sh -c 'cd /app/api && alembic revision -m "$(m)"'
 
 test:
 	@echo "Running tests..."
 	# pytest tests/
 	# npm test
 
+# ----- Demo -----
 demo:
-	@echo "Running demo..."
-	# python scripts/demo.py
+	@echo "Running demo ingress pipeline inside api container..."
+	cd infra && docker compose exec -T api python /app/scripts/demo_ingest.py
 
 seed:
 	@echo "Seeding database..."
@@ -42,3 +61,16 @@ clean:
 	rm -rf .pytest_cache
 	rm -rf htmlcov
 	rm -rf .coverage
+
+.PHONY: dbtest
+dbtest:
+	@echo "Running DB smoke test..."
+	cd infra && docker compose exec -T api python - <<'PY'
+	from api.database import build_engine_from_env,get_sessionmaker
+	from api.db import with_session,insert_raw_post,upsert_event,now_utc
+	S=get_sessionmaker(build_engine_from_env())
+	with with_session(S) as s:
+	    pid=insert_raw_post(s,'tester','hello world',now_utc(),['https://x.com'])
+	    upsert_event(s,'evt:demo','token',0.6,'demo summary',{'posts':[pid]},now_utc())
+	print('ok',pid)
+	PY
