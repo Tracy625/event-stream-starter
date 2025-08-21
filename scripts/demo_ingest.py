@@ -22,6 +22,7 @@ Usage:
 import os
 import sys
 import json
+import time
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
@@ -35,6 +36,7 @@ from api.refine import refine_post
 from api.dedup import DeduplicationService
 from api.db import insert_raw_post, upsert_event, with_session
 from api.database import build_engine_from_env, get_sessionmaker
+from api.metrics import timeit, log_json as metrics_log_json
 
 
 def get_sample_posts() -> List[Dict[str, Any]]:
@@ -77,10 +79,18 @@ def log_json(data: Dict[str, Any]) -> None:
 
 def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, SessionClass) -> Dict[str, Any]:
     """
-    Process a single post through the full pipeline.
+    Process a single post through the full pipeline with timing metrics.
     
     Returns dict with processing results for logging.
     """
+    # Track overall pipeline start
+    pipeline_start = time.perf_counter()
+    
+    # Get latency budgets from environment
+    budget_filter = int(os.getenv("LATENCY_BUDGET_MS_FILTER", "1000"))
+    budget_refine = int(os.getenv("LATENCY_BUDGET_MS_REFINE", "1000"))
+    budget_total = int(os.getenv("LATENCY_BUDGET_MS_TOTAL", "2000"))
+    
     result = {
         "author": post["author"],
         "passed_filter": False,
@@ -89,13 +99,39 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
         "is_duplicate": None,
         "db_inserted": False,
         "raw_post_id": None,
-        "event_upserted": False
+        "event_upserted": False,
+        "timings": {}
     }
     
-    # Step 1: Filter
     text = post["text"]
-    if not filters_text(text):
+    
+    # Step 1: Filter with timing
+    filter_start = time.perf_counter()
+    filter_backend = "rules"  # Default backend
+    
+    try:
+        passed = filters_text(text)
+        if passed:
+            sentiment_label, sentiment_score = analyze_sentiment(text)
+            result["sentiment"] = f"{sentiment_label} ({sentiment_score:.2f})"
+    except Exception as e:
+        passed = False
+        sentiment_label, sentiment_score = None, None
+        
+    filter_ms = int(round((time.perf_counter() - filter_start) * 1000))
+    result["timings"]["t_filter_ms"] = filter_ms
+    
+    # Check if filter exceeded budget
+    if filter_ms > budget_filter:
+        filter_backend = "rules"  # Force degradation
+        metrics_log_json(stage="degradation", phase="filter", exceeded_ms=filter_ms, budget_ms=budget_filter, backend="rules")
+    
+    if not passed:
         print(f"[FILTER] Post from {post['author']} filtered out - not crypto-relevant")
+        
+        # Calculate total time
+        total_ms = int(round((time.perf_counter() - pipeline_start) * 1000))
+        result["timings"]["t_total_ms"] = total_ms
         
         # Log JSON for filtered out post
         log_json({
@@ -105,24 +141,37 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
             "event_key": None,
             "dedup": None,
             "db": {"raw_post_id": None, "event_upserted": False},
-            "ts": post["ts"].isoformat()
+            "ts": post["ts"].isoformat(),
+            "t_filter_ms": filter_ms,
+            "t_total_ms": total_ms,
+            "backend_filter": filter_backend
         })
         return result
     
     result["passed_filter"] = True
-    
-    # Analyze sentiment
-    sentiment_label, sentiment_score = analyze_sentiment(text)
-    result["sentiment"] = f"{sentiment_label} ({sentiment_score:.2f})"
     print(f"[FILTER] Post from {post['author']} passed - sentiment: {result['sentiment']}")
     
-    # Step 2: Refine
+    # Step 2: Refine with timing
+    refine_start = time.perf_counter()
+    refine_backend = "rules"
+    
     refined = refine_post(text)
     event_key = refined["event_key"]
     result["event_key"] = event_key
+    
+    refine_ms = int(round((time.perf_counter() - refine_start) * 1000))
+    result["timings"]["t_refine_ms"] = refine_ms
+    
+    # Check if refine exceeded budget
+    if refine_ms > budget_refine:
+        refine_backend = "rules"  # Force degradation
+        metrics_log_json(stage="degradation", phase="refine", exceeded_ms=refine_ms, budget_ms=budget_refine, backend="rules")
+    
     print(f"[REFINE] Generated event_key: {event_key}, type: {refined['type']}, score: {refined['score']:.2f}")
     
-    # Step 3: Dedup
+    # Step 3: Dedup with timing
+    dedup_start = time.perf_counter()
+    
     is_duplicate = dedup_service.is_duplicate(event_key, post["ts"])
     result["is_duplicate"] = is_duplicate
     
@@ -132,7 +181,11 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
         print(f"[DEDUP] New event - recording event_key {event_key}")
         dedup_service.record(event_key, post["ts"])
     
-    # Step 4: Database
+    dedup_ms = int(round((time.perf_counter() - dedup_start) * 1000))
+    result["timings"]["t_dedup_ms"] = dedup_ms
+    
+    # Step 4: Database with timing
+    db_start = time.perf_counter()
     raw_id = None
     event_upserted = False
     
@@ -176,6 +229,13 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
         print(f"[DB] Error: {e}")
         result["db_inserted"] = False
         
+        db_ms = int(round((time.perf_counter() - db_start) * 1000))
+        result["timings"]["t_db_ms"] = db_ms
+        
+        # Calculate total time
+        total_ms = int(round((time.perf_counter() - pipeline_start) * 1000))
+        result["timings"]["t_total_ms"] = total_ms
+        
         # Log JSON for error
         log_json({
             "stage": "error",
@@ -185,9 +245,27 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
             "dedup": "hit" if is_duplicate else "miss",
             "db": {"raw_post_id": None, "event_upserted": None},
             "ts": post["ts"].isoformat(),
-            "error": str(e)
+            "error": str(e),
+            "t_filter_ms": filter_ms,
+            "t_refine_ms": refine_ms,
+            "t_dedup_ms": dedup_ms,
+            "t_db_ms": db_ms,
+            "t_total_ms": total_ms,
+            "backend_filter": filter_backend,
+            "backend_refine": refine_backend
         })
         return result
+    
+    db_ms = int(round((time.perf_counter() - db_start) * 1000))
+    result["timings"]["t_db_ms"] = db_ms
+    
+    # Calculate total time
+    total_ms = int(round((time.perf_counter() - pipeline_start) * 1000))
+    result["timings"]["t_total_ms"] = total_ms
+    
+    # Check if total exceeded budget
+    if total_ms > budget_total:
+        metrics_log_json(stage="degradation", phase="total", exceeded_ms=total_ms, budget_ms=budget_total, backend="rules")
     
     # Log JSON for successful processing
     log_json({
@@ -197,7 +275,14 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
         "event_key": event_key,
         "dedup": "hit" if is_duplicate else "miss",
         "db": {"raw_post_id": raw_id, "event_upserted": event_upserted},
-        "ts": post["ts"].isoformat()
+        "ts": post["ts"].isoformat(),
+        "t_filter_ms": filter_ms,
+        "t_refine_ms": refine_ms,
+        "t_dedup_ms": dedup_ms,
+        "t_db_ms": db_ms,
+        "t_total_ms": total_ms,
+        "backend_filter": filter_backend,
+        "backend_refine": refine_backend
     })
     
     return result
