@@ -47,8 +47,8 @@ test:
 
 # ----- Demo -----
 demo:
-	@echo "Running demo ingress pipeline inside api container..."
-	cd infra && docker compose exec -T api python /app/scripts/demo_ingest.py
+	@echo "Running demo ingestion pipeline inside api container..."
+	docker compose -f infra/docker-compose.yml exec -T api python scripts/demo_ingest.py
 
 seed:
 	@echo "Seeding database..."
