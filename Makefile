@@ -1,10 +1,11 @@
-.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest
+.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment
 
 help:
 	@echo "Targets:"
 	@echo "  up/down/logs       - manage docker compose services"
 	@echo "  migrate/revision   - Alembic apply / create new revision (use m=\"message\")"
 	@echo "  demo               - run demo_ingest.py inside api container"
+	@echo "  bench-sentiment    - run sentiment analysis benchmark"
 	@echo "  dbtest             - quick DB insert/upsert smoke test"
 	@echo "  api/worker         - run services locally (placeholder)"
 	@echo "  test/seed          - run tests / seed database (placeholder)"
@@ -53,6 +54,17 @@ demo:
 seed:
 	@echo "Seeding database..."
 	# python scripts/seed_db.py
+
+# ----- Benchmark -----
+bench-sentiment:
+	@echo "Running sentiment analysis benchmark..."
+	@docker compose -f infra/docker-compose.yml exec -T api sh -c \
+		'if [ ! -f scripts/bench_sentiment.py ]; then \
+			echo "Error: scripts/bench_sentiment.py not found"; \
+			exit 1; \
+		else \
+			python scripts/bench_sentiment.py; \
+		fi'
 
 clean:
 	@echo "Cleaning up..."
