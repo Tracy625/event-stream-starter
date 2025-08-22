@@ -51,7 +51,7 @@ def load_golden_data() -> List[dict]:
     return samples
 
 
-def benchmark_sentiment(samples: List[dict], n_runs: int) -> Tuple[float, float]:
+def benchmark_sentiment(samples: List[dict], n_runs: int) -> Tuple[float, float, float]:
     """
     Run sentiment analysis N times and calculate timing metrics.
     
@@ -60,7 +60,7 @@ def benchmark_sentiment(samples: List[dict], n_runs: int) -> Tuple[float, float]
         n_runs: Number of benchmark runs
     
     Returns:
-        (avg_ms, p95_ms) tuple
+        (avg_ms, p50_ms, p95_ms) tuple
     """
     timings = []
     
@@ -93,28 +93,37 @@ def benchmark_sentiment(samples: List[dict], n_runs: int) -> Tuple[float, float]
     timings.sort()
     avg_ms = sum(timings) / len(timings)
     
+    # Calculate p50
+    p50_index = int(len(timings) * 0.5)
+    if p50_index >= len(timings):
+        p50_index = len(timings) - 1
+    p50_ms = timings[p50_index]
+    
     # Calculate p95
     p95_index = int(len(timings) * 0.95)
     if p95_index >= len(timings):
         p95_index = len(timings) - 1
     p95_ms = timings[p95_index]
     
-    return avg_ms, p95_ms
+    return avg_ms, p50_ms, p95_ms
 
 
 def main():
     """Main benchmark execution."""
     # Get number of runs from environment
     n_runs = int(os.getenv("N", "20"))
+    backend = os.getenv("SENTIMENT_BACKEND", "rules")
     
     # Load golden data
     samples = load_golden_data()
     
     # Run benchmark
-    avg_ms, p95_ms = benchmark_sentiment(samples, n_runs)
+    avg_ms, p50_ms, p95_ms = benchmark_sentiment(samples, n_runs)
     
-    # Output results in exact format
+    # Output results with backend info
+    print(f"Backend: {backend}")
     print(f"avg_ms: {avg_ms:.2f}")
+    print(f"p50_ms: {p50_ms:.2f}")
     print(f"p95_ms: {p95_ms:.2f}")
 
 
