@@ -1,0 +1,233 @@
+"""
+Keyphrase extraction module.
+
+Provides keyphrase extraction using HuggingFace KBIR models or rule-based fallback.
+Outputs deduplicated, lowercased phrases with stopwords removed.
+"""
+
+import os
+import re
+import logging
+import math
+from typing import List, Tuple, Optional
+from api.metrics import log_json
+
+
+# Common English stopwords
+STOPWORDS = {
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
+    'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the',
+    'to', 'was', 'will', 'with', 'the', 'this', 'but', 'they', 'have',
+    'had', 'what', 'when', 'where', 'who', 'which', 'why', 'how',
+    'all', 'would', 'there', 'their', 'could', 'been', 'some', 'more',
+    'can', 'has', 'have', 'had', 'do', 'does', 'did', 'will', 'would',
+    'could', 'should', 'may', 'might', 'must', 'shall', 'can', 'need',
+    'i', 'you', 'he', 'she', 'we', 'they', 'them', 'him', 'her', 'us'
+}
+
+
+class KeyphraseExtractor:
+    """Keyphrase extractor with HF and rule-based backends."""
+    
+    def __init__(self):
+        """Initialize keyphrase extractor."""
+        self.backend = os.getenv("KEYPHRASE_BACKEND", "off")
+        self.model_name = os.getenv("KEYPHRASE_MODEL", "ml6team/keyphrase-extraction-kbir-inspec")
+        self.pipeline = None
+        self._initialized = False
+        
+    def _init_model(self):
+        """Lazy load HF model for keyphrase extraction."""
+        if self._initialized or self.backend != "kbir":
+            return
+            
+        try:
+            # Delayed import
+            from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification
+            
+            # Load model and tokenizer
+            tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            model = AutoModelForTokenClassification.from_pretrained(self.model_name)
+            
+            # Create pipeline
+            self.pipeline = pipeline(
+                "token-classification",
+                model=model,
+                tokenizer=tokenizer,
+                aggregation_strategy="simple"
+            )
+            
+            self._initialized = True
+            log_json("kbir_init", model=self.model_name, status="success")
+            
+        except Exception as e:
+            log_json("kbir_init", model=self.model_name, error=str(e), status="failed")
+            # Fall back to rules
+            self.backend = "rules"
+    
+    def _extract_rules(self, text: str) -> List[str]:
+        """
+        Extract keyphrases using rule-based approach.
+        
+        Finds:
+        - Token symbols ($XXX)
+        - Contract addresses (0x...)
+        - Capitalized phrases
+        - Common crypto terms
+        """
+        keyphrases = []
+        
+        # Extract token symbols
+        tokens = re.findall(r'\$[A-Z]{2,10}\b', text)
+        keyphrases.extend([t.lower() for t in tokens])
+        
+        # Extract contract addresses (shortened)
+        contracts = re.findall(r'0x[a-fA-F0-9]{6,}', text)
+        keyphrases.extend([c[:10].lower() for c in contracts])  # First 10 chars
+        
+        # Extract capitalized words/phrases (potential project names)
+        capitalized = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+        keyphrases.extend([c.lower() for c in capitalized if len(c) > 2])
+        
+        # Common crypto terms in text
+        crypto_terms = [
+            'airdrop', 'token', 'coin', 'launch', 'mint', 'deploy',
+            'contract', 'mainnet', 'testnet', 'defi', 'nft', 'dao',
+            'staking', 'farming', 'pool', 'liquidity', 'swap', 'dex',
+            'bullish', 'bearish', 'pump', 'dump', 'moon', 'gem'
+        ]
+        
+        text_lower = text.lower()
+        for term in crypto_terms:
+            if term in text_lower:
+                keyphrases.append(term)
+        
+        return keyphrases
+    
+    def _extract_kbir(self, text: str) -> List[str]:
+        """
+        Extract keyphrases using KBIR model.
+        
+        Args:
+            text: Input text
+            
+        Returns:
+            List of keyphrases
+        """
+        if not self._initialized:
+            self._init_model()
+        
+        if self.pipeline is None:
+            # Fallback to rules if model failed to load
+            return self._extract_rules(text)
+        
+        try:
+            # Run KBIR model
+            outputs = self.pipeline(text)
+            
+            # Extract keyphrases from token classification
+            keyphrases = []
+            current_phrase = []
+            
+            for output in outputs:
+                if output['entity_group'].startswith('B-'):  # Beginning of keyphrase
+                    if current_phrase:
+                        keyphrases.append(' '.join(current_phrase))
+                    current_phrase = [output['word'].replace('▁', '')]
+                elif output['entity_group'].startswith('I-'):  # Inside keyphrase
+                    current_phrase.append(output['word'].replace('▁', ''))
+                else:
+                    if current_phrase:
+                        keyphrases.append(' '.join(current_phrase))
+                        current_phrase = []
+            
+            # Add last phrase if any
+            if current_phrase:
+                keyphrases.append(' '.join(current_phrase))
+            
+            return keyphrases
+            
+        except Exception as e:
+            log_json("kbir_error", error=str(e), fallback="rules")
+            return self._extract_rules(text)
+    
+    def extract(self, text: str) -> List[str]:
+        """
+        Extract keyphrases from text.
+        
+        Args:
+            text: Input text
+            
+        Returns:
+            List of deduplicated, lowercased keyphrases (len >= 2, no stopwords)
+        """
+        if self.backend == "off":
+            return []
+        
+        # Extract keyphrases based on backend
+        if self.backend == "kbir":
+            keyphrases = self._extract_kbir(text)
+        else:
+            keyphrases = self._extract_rules(text)
+        
+        # Post-process keyphrases
+        processed = []
+        seen = set()
+        
+        for phrase in keyphrases:
+            # Lowercase and strip
+            phrase = phrase.lower().strip()
+            
+            # Skip if too short
+            if len(phrase) < 2:
+                continue
+            
+            # Remove phrases that are just stopwords
+            words = phrase.split()
+            if all(w in STOPWORDS for w in words):
+                continue
+            
+            # Remove leading/trailing stopwords
+            while words and words[0] in STOPWORDS:
+                words.pop(0)
+            while words and words[-1] in STOPWORDS:
+                words.pop()
+            
+            if not words:
+                continue
+            
+            phrase = ' '.join(words)
+            
+            # Deduplicate
+            if phrase not in seen:
+                seen.add(phrase)
+                processed.append(phrase)
+        
+        # Limit to top 5-10 phrases
+        return processed[:10]
+
+
+# Singleton instance
+_extractor: Optional[KeyphraseExtractor] = None
+
+
+def get_extractor() -> KeyphraseExtractor:
+    """Get or create singleton extractor."""
+    global _extractor
+    if _extractor is None:
+        _extractor = KeyphraseExtractor()
+    return _extractor
+
+
+def extract_keyphrases(text: str) -> List[str]:
+    """
+    Extract keyphrases from text.
+    
+    Args:
+        text: Input text
+        
+    Returns:
+        List of keyphrases (3-5 typically, deduplicated, lowercased, len >= 2)
+    """
+    extractor = get_extractor()
+    return extractor.extract(text)

@@ -1,11 +1,12 @@
-.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment
+.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment
 
 help:
 	@echo "Targets:"
 	@echo "  up/down/logs       - manage docker compose services"
 	@echo "  migrate/revision   - Alembic apply / create new revision (use m=\"message\")"
 	@echo "  demo               - run demo_ingest.py inside api container"
-	@echo "  bench-sentiment    - run sentiment analysis benchmark"
+	@echo "  bench-sentiment    - run sentiment analysis benchmark (set SENTIMENT_BACKEND=hf for HF)"
+	@echo "  smoke-sentiment    - test both sentiment backends with fixed inputs"
 	@echo "  dbtest             - quick DB insert/upsert smoke test"
 	@echo "  api/worker         - run services locally (placeholder)"
 	@echo "  test/seed          - run tests / seed database (placeholder)"
@@ -65,6 +66,10 @@ bench-sentiment:
 		else \
 			python scripts/bench_sentiment.py; \
 		fi'
+
+smoke-sentiment:
+	@echo "Running sentiment smoke test for both backends..."
+	@docker compose -f infra/docker-compose.yml exec -T api python scripts/smoke_sentiment.py
 
 clean:
 	@echo "Cleaning up..."

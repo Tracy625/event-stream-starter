@@ -1,0 +1,20 @@
+# 基础框架
+fastapi>=0.111,<0.112
+uvicorn[standard]>=0.30,<0.31
+celery>=5.4,<5.5
+redis>=5.0,<6
+
+# 数据库 & 迁移
+psycopg2-binary>=2.9,<3
+SQLAlchemy>=2.0,<2.1
+alembic>=1.13,<1.14
+
+# 配置 & 日志
+python-dotenv>=1.0,<2
+structlog>=24.1,<25
+
+# Day04 新增: HuggingFace & Torch
+transformers>=4.41,<5
+huggingface-hub>=0.23,<1
+# 如果后续用 sentencepiece 模型，再启用：
+# sentencepiece>=0.2,<0.3
