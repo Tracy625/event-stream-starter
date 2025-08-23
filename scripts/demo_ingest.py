@@ -23,9 +23,8 @@ import os
 import sys
 import json
 import time
-import logging
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,9 +33,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.filter import filters_text, analyze_sentiment
 from api.refine import refine_post
 from api.dedup import DeduplicationService
-from api.db import insert_raw_post, upsert_event, with_session
+from api.db import insert_raw_post, with_session
 from api.database import build_engine_from_env, get_sessionmaker
-from api.metrics import timeit, log_json as metrics_log_json
+from api.metrics import log_json as metrics_log_json
 
 
 def get_sample_posts() -> List[Dict[str, Any]]:
@@ -184,10 +183,58 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
     dedup_ms = int(round((time.perf_counter() - dedup_start) * 1000))
     result["timings"]["t_dedup_ms"] = dedup_ms
     
-    # Step 4: Database with timing
+    # Step 4: Event aggregation (NEW)
+    # Always aggregate events - duplicates increase evidence_count
+    event_start = time.perf_counter()
+    event_result = None
+    event_aggregated = False
+    
+    # Event aggregation MUST come from api.events (avoid name clash with api.db)
+    from api.events import upsert_event as events_upsert_event
+    
+    # Build enriched post dict for event aggregation
+    enriched_post = {
+        "symbol": refined.get("assets", {}).get("symbol"),
+        "token_ca": refined.get("assets", {}).get("ca"),
+        "keywords": refined.get("keywords", []),
+        "sentiment_label": sentiment_label,
+        "sentiment_score": sentiment_score,
+        "created_ts": post["ts"]
+    }
+    
+    try:
+        # Always perform event aggregation (even for duplicates - increases evidence_count)
+        event_result = events_upsert_event(enriched_post)
+        result["event_aggregation"] = event_result
+        event_aggregated = True
+        
+        # Calculate timing before logging
+        event_ms = int(round((time.perf_counter() - event_start) * 1000))
+        result["timings"]["t_event_ms"] = event_ms
+        
+        # Log event aggregation
+        metrics_log_json(
+            stage="pipeline.event",
+            event_key=event_result["event_key"],
+            evidence_count=event_result["evidence_count"],
+            candidate_score=event_result["candidate_score"],
+            symbol=enriched_post.get("symbol"),
+            t_event_ms=event_ms
+        )
+        
+        print(f"[EVENT] Aggregated event_key={event_result['event_key']}, evidence_count={event_result['evidence_count']}, candidate_score={event_result['candidate_score']:.2f}")
+    except Exception as e:
+        print(f"[EVENT] Error during event aggregation: {e}")
+        result["event_aggregation"] = {"error": str(e)}
+        event_aggregated = False
+        
+        # Calculate timing even on error
+        event_ms = int(round((time.perf_counter() - event_start) * 1000))
+        result["timings"]["t_event_ms"] = event_ms
+    
+    # Step 5: Database with timing (existing code)
     db_start = time.perf_counter()
     raw_id = None
-    event_upserted = False
     
     try:
         with with_session(SessionClass) as session:
@@ -202,26 +249,10 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
             print(f"[DB] Inserted raw_post id={raw_id}")
             result["raw_post_id"] = raw_id
             
-            # Only upsert event if not duplicate
-            if not is_duplicate:
-                evidence = {
-                    "raw_ids": [raw_id],
-                    "assets": refined.get("assets", {}),
-                    "sentiment": {"label": sentiment_label, "score": sentiment_score}
-                }
-                
-                upsert_event(
-                    session=session,
-                    event_key=event_key,
-                    type=refined["type"],
-                    score=refined["score"],
-                    summary=refined["summary"],
-                    evidence=evidence,
-                    ts=post["ts"]
-                )
-                print(f"[DB] Upserted event with key={event_key}")
-                event_upserted = True
-                result["event_upserted"] = True
+            # Legacy event table update removed - now handled by api.events.upsert_event
+            # The new event aggregation happens in Step 4 above
+            # Track that event was aggregated (not using old upsert)
+            result["event_upserted"] = event_aggregated
             
             result["db_inserted"] = True
             
@@ -243,12 +274,13 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
             "passed": True,
             "event_key": event_key,
             "dedup": "hit" if is_duplicate else "miss",
-            "db": {"raw_post_id": None, "event_upserted": None},
+            "db": {"raw_post_id": None, "event_upserted": event_aggregated},
             "ts": post["ts"].isoformat(),
             "error": str(e),
             "t_filter_ms": filter_ms,
             "t_refine_ms": refine_ms,
             "t_dedup_ms": dedup_ms,
+            "t_event_ms": event_ms,
             "t_db_ms": db_ms,
             "t_total_ms": total_ms,
             "backend_filter": filter_backend,
@@ -274,11 +306,12 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
         "passed": True,
         "event_key": event_key,
         "dedup": "hit" if is_duplicate else "miss",
-        "db": {"raw_post_id": raw_id, "event_upserted": event_upserted},
+        "db": {"raw_post_id": raw_id, "event_upserted": event_aggregated},
         "ts": post["ts"].isoformat(),
         "t_filter_ms": filter_ms,
         "t_refine_ms": refine_ms,
         "t_dedup_ms": dedup_ms,
+        "t_event_ms": event_ms,
         "t_db_ms": db_ms,
         "t_total_ms": total_ms,
         "backend_filter": filter_backend,
@@ -339,18 +372,45 @@ def main():
     duplicates = sum(1 for r in results if r["is_duplicate"])
     inserted = sum(1 for r in results if r["db_inserted"])
     
+    # Event aggregation stats
+    unique_event_keys = set()
+    total_evidence_count = 0
+    
+    for r in results:
+        if "event_aggregation" in r and isinstance(r["event_aggregation"], dict):
+            if "event_key" in r["event_aggregation"]:
+                unique_event_keys.add(r["event_aggregation"]["event_key"])
+            if "evidence_count" in r["event_aggregation"]:
+                # Only count the last evidence_count for each unique key
+                pass  # Will be calculated differently
+    
+    # Get actual evidence counts from event aggregation results
+    event_evidence_map = {}
+    for r in results:
+        if "event_aggregation" in r and isinstance(r["event_aggregation"], dict):
+            if "event_key" in r["event_aggregation"] and "evidence_count" in r["event_aggregation"]:
+                event_evidence_map[r["event_aggregation"]["event_key"]] = r["event_aggregation"]["evidence_count"]
+    
+    total_evidence_count = sum(event_evidence_map.values())
+    
     print(f"Total posts: {len(posts)}")
     print(f"Passed filter: {passed}")
     print(f"Duplicates found: {duplicates}")
     print(f"DB inserts: {inserted}")
     print(f"Unique events: {passed - duplicates}")
+    print(f"Unique event keys (aggregated): {len(unique_event_keys)}")
+    print(f"Total evidence count: {total_evidence_count}")
     
     # Show event keys
     print("\nEvent keys generated:")
     for r in results:
         if r["event_key"]:
             dup_marker = " (DUPLICATE)" if r["is_duplicate"] else ""
-            print(f"  - {r['event_key']}{dup_marker}")
+            agg_info = ""
+            if "event_aggregation" in r and isinstance(r["event_aggregation"], dict):
+                if "evidence_count" in r["event_aggregation"]:
+                    agg_info = f" [evidence_count={r['event_aggregation']['evidence_count']}]"
+            print(f"  - {r['event_key']}{dup_marker}{agg_info}")
     
     # Log summary JSON
     log_json({
@@ -364,7 +424,9 @@ def main():
         "total_posts": len(posts),
         "passed_filter": passed,
         "duplicates_found": duplicates,
-        "unique_events": passed - duplicates
+        "unique_events": passed - duplicates,
+        "unique_event_keys": len(unique_event_keys),
+        "total_evidence_count": total_evidence_count
     })
     
     print("\n✅ Demo ingestion completed successfully")
