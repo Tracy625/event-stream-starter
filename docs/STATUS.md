@@ -16,15 +16,24 @@
   - Makefile 新增 bench-sentiment 目标
   - infra/.env.example 补充 SENTIMENT/HF/KEYPHRASE 与 LATENCY_BUDGET_MS\_\* 变量
   - bench_sentiment 可运行，默认 rules-only；可配置 N 次采样
+- Day 4: HuggingFace Sentiment & Keywords Enhancement (verified)
+  - Sentiment router 拆分 (rules/hf)，调用期路由与降级路径完成
+  - HF id2label → {"pos","neu","neg"}；Score = P(pos)-P(neg)，[-1,1] 截断
+  - Keyphrases: KBIR + rules fallback，去重/小写/停用词处理
+  - /scripts/smoke_sentiment.py 可运行，bench-sentiment 支持双后端
+  - .env.example 更新 SENTIMENT_BACKEND / HF_MODEL / KEYPHRASE_BACKEND
+  - 验收通过：HF+ 返回正，HF- 返回负，坏模型时降级为 rules
 
-## Today (D4)
+## Today (D5)
 
-- 打通字段：将 is_candidate, sentiment_label/score, symbol, token_ca, keywords 写入 raw_posts（保持 insert_raw_post 兼容）
-- 重复事件推进 last_ts，不新增事件；保持 upsert_event 只更改允许的字段
-- 增加 scripts/verify_dedup.py：读取近 N 条 raw_posts，输出去重前后计数与命中率
+- 扩展事件信号生成逻辑，补充 sentiment + keywords 的落库与事件联动
+- 在事件 upsert 流程里，将 sentiment_label/score、keywords、is_candidate 一并写入
+- 为事件新增字段 candidate_score，用 sentiment + keyword 命中数计算（保持 schema 向前兼容）
+- 新增 scripts/verify_signals.py：对 raw_posts 与 events 进行抽样校验，输出 candidate_score 分布
 
-## Acceptance (D4)
+## Acceptance (D5)
 
-- 运行 `make demo` 后，raw_posts 最近 5 条至少有 3 条字段非空：is_candidate、sentiment\*\*、symbol/token_ca、keywords
-- 同一 event_key 在两次运行之间 last_ts 单调递增
-- `python scripts/verify_dedup.py` 输出含 JSON 统计：{total, unique_event_keys, hits}
+- `make demo` 后，raw_posts/ events 表中有 sentiment_label/score、keywords、is_candidate 字段，且非空率 >60%
+- candidate_score 在 0–1 区间，且与 sentiment/keywords 命中数相关
+- `python scripts/verify_signals.py` 输出 JSON 统计：{sample_size, candidate_score_mean, candidate_score_p95}
+- event upsert 的 last_ts 仍保持单调递增
