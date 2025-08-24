@@ -1,4 +1,4 @@
-.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment
+.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment verify-refiner demo-refine
 
 help:
 	@echo "Targets:"
@@ -91,3 +91,27 @@ dbtest:
 	    upsert_event(s,'evt:demo','token',0.6,'demo summary',{'posts':[pid]},now_utc())
 	print('ok',pid)
 	PY
+
+verify-refiner:
+	@if [ -n "$(REFINE_BACKEND)" ]; then \
+	  EXTRA_ENV="-e REFINE_BACKEND=$(REFINE_BACKEND)"; \
+	else \
+	  EXTRA_ENV=""; \
+	fi; \
+	docker compose -f infra/docker-compose.yml exec -T $$EXTRA_ENV \
+	  api bash -lc 'PYTHONPATH=/app python -m api.scripts.verify_refiner'
+
+verify-refiner-rules:
+	REFINE_BACKEND=rules $(MAKE) verify-refiner
+
+verify-refiner-llm:
+	REFINE_BACKEND=llm $(MAKE) verify-refiner
+
+demo-refine:
+	@if [ -n "$(REFINE_BACKEND)" ]; then \
+	  EXTRA_ENV="-e REFINE_BACKEND=$(REFINE_BACKEND)"; \
+	else \
+	  EXTRA_ENV=""; \
+	fi; \
+	docker compose -f infra/docker-compose.yml exec -T $$EXTRA_ENV \
+	  api bash -lc 'PYTHONPATH=/app python -m api.scripts.demo_refine'

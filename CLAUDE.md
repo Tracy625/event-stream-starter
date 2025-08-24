@@ -106,3 +106,11 @@
 ### Cache (Day3+ Rules)
 
 - `@memoize_ttl` 装饰器必须输出 JSON 日志，包含 cache hit/miss 与原因。
+
+### Refiner 约束（DAY6 rules）
+
+- 严格禁止返回裸 `print`，统一使用 `log_json`。
+- LLMRefiner 只允许返回经 `RefineModel` 校验后的结构化 JSON，禁止直接拼接字符串。
+- 如果 LLM 调用失败，必须走降级路径（fallback 或 rules），禁止返回半成品结果。
+- 禁止在成功调用 LLM 后再强制覆盖为 rules 结果。
+- 运行过程中发现 JSON schema 校验失败，必须 `log_json(stage="refine.reject", ...)`，不得静默丢弃。
