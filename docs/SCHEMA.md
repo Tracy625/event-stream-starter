@@ -106,18 +106,24 @@ signals
 
 说明
 • Day1 初始建表（后续阶段消费 events 结果）
+• Day11 增加 heat_slope 字段，用于存储热度斜率
+• Day13 确认 goplus/dex/heat 字段均需写入，作为规则引擎输入/输出的落地表
 
-    •	id BIGSERIAL PRIMARY KEY (Day1)
-    •	event_key TEXT REFERENCES events(event_key) (Day1)
-    •	market_type TEXT (Day1)
-    •	advice_tag TEXT (Day1)
-    •	confidence INTEGER (Day1)
-    •	goplus_risk TEXT (Day1)
-    •	goplus_tax DOUBLE PRECISION (Day1)
-    •	lp_lock_days INTEGER (Day1)
-    •	dex_liquidity DOUBLE PRECISION (Day1)
-    •	dex_volume_1h DOUBLE PRECISION (Day1)
-    •	ts TIMESTAMPTZ DEFAULT now() (Day1)
+    • id BIGSERIAL PRIMARY KEY (Day1)
+    • event_key TEXT REFERENCES events(event_key) (Day1)
+    • market_type TEXT (Day1)
+    • advice_tag TEXT (Day1)
+    • confidence DOUBLE PRECISION (Day1, 修正：原为 INTEGER，改为浮点数以支持小数置信度)
+    • goplus_risk TEXT (Day1)
+    • goplus_tax DOUBLE PRECISION (Day1)
+    • lp_lock_days INTEGER (Day1)
+    • dex_liquidity DOUBLE PRECISION (Day1)
+    • dex_volume_1h DOUBLE PRECISION (Day1)
+    • heat_slope DOUBLE PRECISION (Day11)
+    • ts TIMESTAMPTZ DEFAULT now() (Day1)
+
+Indexes
+• CREATE INDEX ON signals (event_key, ts DESC); (Day1)
 
 Indexes
 • CREATE INDEX ON signals (event_key, ts DESC); (Day1)

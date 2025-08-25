@@ -27,6 +27,8 @@
 
 ## Day2 — Filter / Refine / Dedup / DB pipeline
 
+⚠ variance: 原计划是「X API 采集 / 粗筛」，实际完成的是 pipeline/demo，采集推迟到 Day8。
+
 - 运行 demo pipeline
   make demo
 - 验证 raw_posts 表有数据
@@ -35,6 +37,8 @@
 ---
 
 ## Day3 — Demo ingest script & logging
+
+⚠ variance: 原计划是「规则与关键词粗筛」，实际完成的是 demo ingest & logging；粗筛部分将在 Day8–Day9 补齐。
 
 - 运行 demo ingestion 脚本（直接脚本方式）
   docker compose -f infra/docker-compose.yml exec -T api python scripts/demo_ingest.py
