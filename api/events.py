@@ -285,7 +285,7 @@ def make_event_key(post: Dict[str, Any]) -> str:
 
 
 @timeit("events.upsert")
-def upsert_event(post: Dict[str, Any]) -> Dict[str, Any]:
+def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Upsert event to database based on post data.
     
@@ -296,6 +296,7 @@ def upsert_event(post: Dict[str, Any]) -> Dict[str, Any]:
             - All fields required by make_event_key
             - sentiment_label: Sentiment classification
             - sentiment_score: Sentiment score [-1, 1]
+        goplus_data: Optional GoPlus security data to include
     
     Returns:
         Dictionary with:
@@ -347,6 +348,32 @@ def upsert_event(post: Dict[str, Any]) -> Dict[str, Any]:
     # Prepare keywords for JSONB
     keywords_jsonb = keywords_norm if keywords_norm else None
     
+    # Prepare GoPlus data for evidence
+    evidence_jsonb = {}
+    goplus_risk = None
+    buy_tax = None
+    sell_tax = None
+    lp_lock_days = None
+    honeypot = None
+    
+    if goplus_data:
+        # Extract GoPlus fields
+        goplus_risk = goplus_data.get("risk_label")
+        buy_tax = goplus_data.get("buy_tax")
+        sell_tax = goplus_data.get("sell_tax")
+        lp_lock_days = goplus_data.get("lp_lock_days")
+        honeypot = goplus_data.get("honeypot")
+        
+        # Add to evidence
+        evidence_jsonb["goplus_raw"] = {
+            "risk_label": goplus_risk,
+            "buy_tax": buy_tax,
+            "sell_tax": sell_tax,
+            "lp_lock_days": lp_lock_days,
+            "honeypot": honeypot,
+            "checked_at": datetime.now(timezone.utc).isoformat()
+        }
+    
     # Get engine and reflect table
     postgres_url = os.getenv("POSTGRES_URL")
     if not postgres_url:
@@ -355,7 +382,7 @@ def upsert_event(post: Dict[str, Any]) -> Dict[str, Any]:
     
     events = _events_table(engine)
     
-    # Build insert statement
+    # Build insert statement with GoPlus fields
     ins = pg_insert(events).values(
         event_key=event_key,
         symbol=symbol,
@@ -369,7 +396,13 @@ def upsert_event(post: Dict[str, Any]) -> Dict[str, Any]:
         keywords_norm=keywords_jsonb,
         version=version,
         last_sentiment=last_sentiment,
-        last_sentiment_score=last_sentiment_score
+        last_sentiment_score=last_sentiment_score,
+        goplus_risk=goplus_risk,
+        buy_tax=buy_tax,
+        sell_tax=sell_tax,
+        lp_lock_days=lp_lock_days,
+        honeypot=honeypot,
+        evidence=evidence_jsonb if evidence_jsonb else None
     )
     
     # Build upsert statement with ON CONFLICT
@@ -380,7 +413,14 @@ def upsert_event(post: Dict[str, Any]) -> Dict[str, Any]:
             "evidence_count": events.c.evidence_count + 1,
             "last_sentiment": ins.excluded.last_sentiment,
             "last_sentiment_score": ins.excluded.last_sentiment_score,
-            "candidate_score": ins.excluded.candidate_score
+            "candidate_score": ins.excluded.candidate_score,
+            "goplus_risk": ins.excluded.goplus_risk,
+            "buy_tax": ins.excluded.buy_tax,
+            "sell_tax": ins.excluded.sell_tax,
+            "lp_lock_days": ins.excluded.lp_lock_days,
+            "honeypot": ins.excluded.honeypot,
+            # Merge evidence JSONB (append, don't overwrite)
+            "evidence": func.coalesce(events.c.evidence, sa_text("'{}'::jsonb")) + func.coalesce(ins.excluded.evidence, sa_text("'{}'::jsonb"))
         }
     )
     

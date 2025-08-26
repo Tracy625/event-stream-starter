@@ -34,10 +34,13 @@ services:
     working_dir: /app
     volumes:
       - ../api:/app/api:ro
+      - ../rules:/app/rules:ro
     env_file: ./.env
     environment:
-      POSTGRES_URL: postgresql+psycopg2://app:app@db:5432/app
+      PYTHONPATH: /app
+      POSTGRES_URL: postgresql://app:app@db:5432/app
       REDIS_URL: redis://redis:6379/0
+      SECURITY_BACKEND: rules
     ports:
       - "8000:8000"
     depends_on:
