@@ -104,6 +104,40 @@
 
 ---
 
+## Day7.1 — 红黄绿规则与 signals 写入
+
+- 目标：将本地规则（rules backend）标准化并落库，形成可回放与可回滚的安全评分闭环
+- 产物：
+  - `rules/risk_rules.yml`（环境可覆盖的正式规则集）
+  - `api/providers/goplus_provider.py`（集成评分器/降级逻辑）
+  - `api/jobs/goplus_scan.py`（开关式批量写库）
+  - Alembic 已有：`005_add_goplus_cache.py` / `006_add_signals_goplus_fields.py`
+- 复用：Day3+ `timeit` / cache 分层；Day7 `goplus_cache` 与路由契约
+- 验收：
+  - 规则默认值：`HONEYPOT_RED=true`；`RISK_TAX_RED=10`（买/卖税任一>10%→red）；`RISK_LP_YELLOW_DAYS=30`
+  - 评分顺序：honeypot red > tax red > lp yellow > else green；未知项进 `unknown_flags[]`
+  - 3 个垃圾盘样本判定为 `goplus_risk=red` 并写入 `signals`；二次查询显示 `cache=true`，P95≤200ms；降级时 `risk=unknown` 且 `degrade=true`
+- 降级/回滚：`SECURITY_BACKEND=rules` 强制本地规则；关闭批量作业 `ENABLE_GOPLUS_SCAN=false`；保留 DB 缓存与证据可追溯
+
+---
+
+## Day7.2 — 卡片字段规范与推送模板
+
+- 目标：产出统一的推送卡片 schema 与渲染模板，打通 Telegram/内部 UI 的最小可用链路
+- 产物：
+  - `docs/schemas/pushcard.schema.json`（依据 MVP20 的卡片规范）
+  - `templates/pushcard.telegram.j2`、`templates/pushcard.ui.j2`（渲染模板）
+  - 字段映射：`goplus_risk`、`buy_tax`、`sell_tax`、`lp_lock_days`、`honeypot`、`notes[]`、`evidence.goplus_raw.summary`、`cache/degrade/stale`
+  - “复查队列”策略：高热地址入队定期回扫（策略说明文档）
+- 复用：Day7 标准化的 Provider 输出与路由契约；Day3+ 结构化日志
+- 验收：
+  - schema 校验通过（卡片样例符合 `pushcard.schema.json`）
+  - 模板渲染成功输出（Telegram/内部 UI 各 1 份示例）
+  - 复查队列策略文档落地，含触发条件与频率
+- 降级/回滚：保留旧版字段兼容层（字段缺失以 `unknown`/`null` 填充），模板可回滚到简版文本渲染
+
+---
+
 ## Day8 — X KOL 采集（新增，接 Day2 pipeline）
 
 - 目标：5–10 个 KOL，2 分钟轮询，入库去重，规范化文本/URL/合约，并保证能被 pipeline 消费

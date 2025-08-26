@@ -1,5 +1,8 @@
 # WORKFLOW — Mixed-Mode Kickoff
 
+> Audience: Claude Code only. Do **not** read `/docs/WORKFLOW_RULES.md`.  
+> Source of truth for tasks: `/docs/STATUS.md` (Today).
+
 ## Daily Routine
 
 1. Update `/docs/STATUS.md`
@@ -26,6 +29,29 @@
    - Outputs plan (≤5 bullets), diffs, run/test commands
    - You run tests & commit
 
+## 单卡直执（DX）
+
+前置：已完成三次确认（技术方案定稿 → Claude 产卡 → GPT-5 审卡与微调）。
+
+执行模板（逐卡喂给 Claude Code，触发 DX，禁止回读 STATUS）：
+
+### 触发方式（最小必需）
+
+- MODE: DIRECT_EXECUTION # 硬开关，告诉 Claude 切换模式
+- CARD_TITLE: <粘贴该卡标题> # 当前卡片是哪一张
+- ALLOWED_FILES: # 白名单，限定 Claude 只能动这些文件
+  - <相对路径精确到文件>
+  - <...>
+
+# Card Body（原样粘贴该 Task Card 正文）
+
+<目标 / 只许改动的文件 / 实现要点 / 接口契约 / 验收标准 / 观测与日志 / 回滚方案 / 风险与对策 / 禁止事项>
+
+说明：
+
+- DX 模式不进行再规划；只做该卡最小 diff。
+- 任何超出 ALLOWED_FILES 的改动必须中止并返回 SCOPE_VIOLATION。
+
 ## Critical Invariants (DB & Runtime)
 
 - Migrations：新环境或变更后，**先跑** `make migrate`，再做任何 DB 验收。
@@ -39,6 +65,57 @@
 - `make revision m="msg"`：生成新的 Alembic 版本
 - `make demo`：在容器内执行 `scripts/demo_ingest.py`，串联 filter → refine → dedup → db（纯函数，无外网）
 - 使用 heredoc/管道时加 `-T` 关闭 TTY，避免 "the input device is not a TTY"
+
+### Migration Workflow Rules（day7 新增）
+
+1. 在 `infra/` 目录执行：
+
+   - 新建迁移：  
+     `docker compose exec -T api sh -lc 'cd /app/api && alembic revision -m "<msg>"'`  
+     **禁止**手建文件与手写 `revision/down_revision`
+   - 应用迁移：  
+     `docker compose exec -T api sh -lc 'cd /app/api && alembic upgrade head'`
+
+2. 目录与环境：
+
+   - 迁移目录固定：`api/alembic/versions/`；仓库内不得存在 `api/migrations/versions/`。
+   - 容器环境固定：`POSTGRES_URL=postgresql://app:app@db:5432/app` 由 compose 提供。
+
+3. 验收前置检查（必须全部通过）：
+
+   ```bash
+   # 新修订可见（创建后立刻校验）
+   docker compose exec -T api sh -lc 'cd /app/api && alembic show <new_revision>'
+
+   # 唯一 head
+   docker compose exec -T api sh -lc 'cd /app/api && [ "$(alembic heads | wc -l)" = "1" ]'
+
+   # 无重复 revision
+   docker compose exec -T api sh -lc 'grep -R "^revision *= *\x27" /app/api/alembic/versions | awk -F"'" "{print \$2}" | sort | uniq -d | (! read)'
+
+   # 干跑 SQL
+   docker compose exec -T api sh -lc 'cd /app/api && alembic upgrade head --sql >/dev/null'
+
+   # 升降级往返
+   docker compose exec -T api sh -lc 'cd /app/api && alembic downgrade -1 && alembic upgrade head'
+   ```
+
+### Security Workflow Rules（day7 新增）
+
+1. 服务进程环境必须包含：
+   - `SECURITY_BACKEND=rules`（或 goplus，需保持容器和测试一致）
+
+2. Provider 健壮性：
+   - `_evaluate_risk` 必须对 `result=None/非dict/空dict` 做兜底，输出 `risk_label="unknown"` 并写入 `raw_response`
+   - 任何缓存读取的结果均需包含 `raw_response` 字段，避免 `_to_response` 崩溃
+
+3. 路由输出契约：
+   - 所有响应均需完整赋值：`degrade, cache, stale, summary, notes, raw`
+   - 禁止因缺字段返回 500
+
+4. 验收前置：
+   - `verify_goplus_security.py` 3 个样本均判定 red，二次查询命中 cache
+   - `signals` 表对应字段写入 `goplus_risk, buy_tax, sell_tax, lp_lock_days, honeypot, evidence.goplus_raw`
 
 ## One-click Demo (Day 3)
 

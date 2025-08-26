@@ -108,4 +108,32 @@
   docker compose -f infra/docker-compose.yml logs -f api | egrep "refine.request|refine.success|refine.error|refine.degrade|refine.warn"
   ```
 
+# Day7 — GoPlus Security Integration
+
+- 验证 risk_rules.yml 是否存在并包含样例黑名单地址
+
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc 'ls -l /app/rules && head -40 /app/rules/risk_rules.yml'
+
+- 检查 goplus_cache 表结构
+  docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "\d goplus_cache"
+
+- 运行验收脚本（首次运行应显示 red 风险，cache=false）
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc 'cd /app && SECURITY_BACKEND=rules python -m api.scripts.verify_goplus_security'
+
+- 再次运行验收脚本（应显示 cache=true）
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc 'cd /app && SECURITY_BACKEND=rules python -m api.scripts.verify_goplus_security'
+- 手工 curl 路由测试
+  for U in \
+   'http://localhost:8000/security/token?chain_id=1&address=0x123' \
+   'http://localhost:8000/security/address?address=0x123' \
+   'http://localhost:8000/security/approval?chain_id=1&address=0x123&type=erc20'
+  do
+  echo "=== $U"
+    curl -s -i "$U" | sed -n '1p'
+  curl -s "$U" | jq '{ok: (.summary!=null), degrade, cache, stale, label: .summary.risk_label}'
+  done
+- 启用批量扫描（可选，默认关闭）
+  ENABLE_GOPLUS_SCAN=true docker compose -f infra/docker-compose.yml up -d worker
+  docker compose -f infra/docker-compose.yml logs worker | grep goplus.scan | tail -40
+
 ================================================================

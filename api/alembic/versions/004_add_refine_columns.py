@@ -1,3 +1,10 @@
+"""Add refine_columns table
+
+Revision ID: 004
+Revises: 003
+Create Date: 2025-8-24
+
+"""
 from alembic import op
 import sqlalchemy as sa
 

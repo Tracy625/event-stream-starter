@@ -54,6 +54,7 @@
   - 验收通过：candidate_score 在 0–1；last_ts 单调递增；脚本输出 JSON 正确
 
 - Day 6: Refiner (mini LLM, structured JSON) (verified)
+
   - REFINE_BACKEND=llm 成功接通 gpt-5-mini，产出结构化 JSON
   - verify_refiner/verify_refiner-llm 脚本运行通过，10/10 样本均符合 JSON schema
   - 支持降级链路：gpt-5-mini → gpt-4o-mini → gpt-4o；均有结构化日志输出
@@ -61,25 +62,24 @@
   - TODO: 当前延迟 ~7–12s/条，超过 800ms 预算；需在后续阶段优化截断与超时配置
   - 当前验收通过：≥8/10 JSON 合格；容器内 pipeline 稳定，不影响 D5 时序
 
-## Today (D7): GoPlus Integration (Risk Check)
+- Day 7: GoPlus 体检（安全底座） (verified)
+  - 三个已知垃圾盘样本（黑名单地址）均被判定为 `goplus_risk=red`
+  - 验证脚本 `api/scripts/verify_goplus_security.py` 两轮运行均通过；二次命中缓存（Redis/Memory）返回 `cache:true`
+  - 数据库新增表 `goplus_cache`，3 条样本记录已写入；索引结构完整 `(endpoint, chain_id, key)` + `expires_at`
+  - `signals` 表新增字段（`goplus_risk, buy_tax, sell_tax, lp_lock_days, honeypot`）可写入更新
+  - 路由 `/security/{token|address|approval}` 全部返回 200；响应字段含 `degrade/cache/stale/summary/notes/raw`
+  - 支持降级链路：GoPlus API → DB → Redis → Memory → rules；rules 模式下判定风险为 red
+  - 日志覆盖：`goplus.degrade / goplus.cache.{miss,hit,db_error,db_save_error} / goplus.risk / verify.pass`
+  - 批量扫描作业 `api/jobs/goplus_scan.py` 已注册至 worker（默认关闭，节流配置可控）
+  - TODO: 验证批量扫描对 `signals` 的真实写入；延迟控制与额度耗尽场景需进一步压测
+  - 当前验收通过：3/3 样本风险判定正确，缓存与降级逻辑均生效，pipeline 稳定
 
-- 目标：为事件补充合约安全体检数据（税率、LP 锁定、honeypot、黑名单等），并写入 `signals` 表
-- 新增 `api/goplus.py`：
-  - `fetch_security(token_addr) → GoPlusResult`
-  - 包含：`risk_label, buy_tax, sell_tax, lp_lock_days, honeypot`
-- 配置与容错：
-  - ENV：`GOPLUS_API_KEY`, `GOPLUS_TIMEOUT`, `GOPLUS_RETRIES`, `GOPLUS_CACHE_TTL`
-  - 超时/失败自动重试，最终 fallback 为 `risk=unknown`
-- 存储：写入 `signals` 表：`goplus_risk, buy_tax, sell_tax, lp_lock_days, honeypot, ts`
-- 验证脚本：新增 `scripts/verify_goplus.py`，验证样例合约体检结果
-- 日志：结构化埋点：`stage="goplus.request" | "goplus.success" | "goplus.error" | "goplus.cache_hit"`
+## Today (Day7.1):
 
-## Acceptance (D7)
+- status:LOCKED
 
-- 3 个已知垃圾盘样本能被判红
-- API 异常时返回 fallback `risk=unknown`，pipeline 不中断
-- 日志覆盖：`goplus.request / goplus.success / goplus.error / goplus.cache_hit`
-- 容器内延迟增加 ≤ 500ms/条
-- 不影响 D6 pipeline 稳定性
+-
+
+## Acceptance (Day7.1)
 
 ---

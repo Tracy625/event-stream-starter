@@ -1,16 +1,18 @@
 Database Schema Specification
 
 TL;DR
-• Current Alembic Version: 004
+• Current Alembic Version: 006
 • Recent Changes:
+• 2025-08-26 (Day7): 新增 goplus_cache 表 + signals 扩展 goplus 字段
+• 2025-08-25 (Day6): events 表新增精炼结果与执行元数据列（refined*\* 与 refine*\*），新增 2 个索引；读路径不依赖新列，向后兼容
 • 2025-08-24 (Day6): events 表新增精炼结果与执行元数据列（refined*\* 与 refine*\*），新增 2 个索引；读路径不依赖新列，向后兼容
 • 2025-08-23 (Day5): events 表幂等迁移，新增 10 列 + 2 索引（保留旧列）
 • 2025-08-22 (Day4): 接入 HuggingFace 情感分析与关键词抽取，更新相关 ENV
 • 2025-08-21 (Day3+): 增加 metrics/cache/bench，补充结构化日志与延迟预算
 
-Revision: 004（down_revision='003'）
+Revision: 006（down_revision='005'）
 升级命令: alembic upgrade head
-回滚建议: 业务侧可通过 REFINE_BACKEND=rules 立即降级；数据库列为增量，通常不需要回滚。如需清理：alembic downgrade 003。
+回滚建议: 业务侧可通过 REFINE_BACKEND=rules 立即降级；数据库列为增量，通常不需要回滚。如需清理：alembic downgrade 005。
 
 ⸻
 
@@ -108,15 +110,18 @@ signals
 • Day1 初始建表（后续阶段消费 events 结果）
 • Day11 增加 heat_slope 字段，用于存储热度斜率
 • Day13 确认 goplus/dex/heat 字段均需写入，作为规则引擎输入/输出的落地表
+• Day7 扩展 goplus 字段，新增枚举类型及多字段支持
 
     • id BIGSERIAL PRIMARY KEY (Day1)
     • event_key TEXT REFERENCES events(event_key) (Day1)
     • market_type TEXT (Day1)
     • advice_tag TEXT (Day1)
     • confidence DOUBLE PRECISION (Day1, 修正：原为 INTEGER，改为浮点数以支持小数置信度)
-    • goplus_risk TEXT (Day1)
-    • goplus_tax DOUBLE PRECISION (Day1)
-    • lp_lock_days INTEGER (Day1)
+    • goplus_risk TEXT CHECK (goplus_risk IN ('red','yellow','green','unknown')) (Day7)
+    • buy_tax DOUBLE PRECISION (Day7)
+    • sell_tax DOUBLE PRECISION (Day7)
+    • lp_lock_days INTEGER (Day7)
+    • honeypot BOOLEAN (Day7)
     • dex_liquidity DOUBLE PRECISION (Day1)
     • dex_volume_1h DOUBLE PRECISION (Day1)
     • heat_slope DOUBLE PRECISION (Day11)
@@ -125,15 +130,38 @@ signals
 Indexes
 • CREATE INDEX ON signals (event_key, ts DESC); (Day1)
 
+⸻
+
+goplus_cache
+
+说明
+• Day7 新建表，用于缓存 GoPlus API 响应
+
+字段
+• id BIGSERIAL PRIMARY KEY (Day7)
+• endpoint TEXT NOT NULL (Day7)
+• chain_id TEXT NOT NULL (Day7)
+• key TEXT NOT NULL (Day7)
+• payload_hash TEXT NOT NULL (Day7)
+• resp_json JSONB NOT NULL (Day7)
+• status TEXT NOT NULL (Day7)
+• fetched_at TIMESTAMPTZ NOT NULL (Day7)
+• expires_at TIMESTAMPTZ NOT NULL (Day7)
+• created_at TIMESTAMPTZ NOT NULL DEFAULT now() (Day7)
+• updated_at TIMESTAMPTZ NOT NULL DEFAULT now() (Day7)
+
 Indexes
-• CREATE INDEX ON signals (event_key, ts DESC); (Day1)
+• idx_goplus_cache_lookup (endpoint, chain_id, key) (Day7)
+• idx_goplus_cache_expires (expires_at) (Day7)
 
 ⸻
 
 Alembic Migration History
 
 Revision Date Content
-004 2025-08-24 events 新增 refined*\* 与 refine*\* 列；新增索引 idx_events_refine_ts、idx_events_refine_ok
+006 2025-08-26 signals 扩展 goplus\__ 字段 (risk/tax/lp_lock_days/honeypot)，新增表 goplus_cache
+005 2025-08-25 Add goplus_cache table (迁移)
+004 2025-08-24 events 新增 refined_\* 与 refine\*\* 列；新增索引 idx_events_refine_ts、idx_events_refine_ok
 003 2025-08-23 events 幂等迁移：新增 10 列 + 2 索引，保留旧列
 002 2025-08-22 events 增加 score 列
 001 2025-08-21 初始 schema：创建 raw_posts、events、signals
@@ -177,13 +205,13 @@ docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c \
 
 4. 升级与回滚
 
-# 升级到最新（含 004）
+# 升级到最新（含 006）
 
 alembic upgrade head
 
-# 回滚一版（回到 003）
+# 回滚一版（回到 005）
 
-alembic downgrade 003
+alembic downgrade 005
 
 ⸻
 

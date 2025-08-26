@@ -144,3 +144,52 @@
 - 日志输出统一走 `log_json`，覆盖 request / success / error / reject / degrade 场景。
 - 禁止 hardcode 模型名、API key，全部通过 `.env` 或配置注入。
 - 验收标准：≥80% 样本通过 schema 校验，平均延迟低于配置的预算。
+
+## 9. 每日工作流（综合版）
+
+> 注：本节描述人类 + GPT-5 + Claude 的每日协作节奏，不改变前述全局分工与工件顺序。  
+> 注 2（与现有条款的关系）：DX 模式下不再触发“Today 一致性”检查（INCONSISTENCY_REPORT），仅以 ALLOWED_FILES 做范围校验；默认模式仍遵循 SSOT（以 STATUS.md 的 Today 为唯一来源）。
+
+### Step 0 — 技术方案确认（GPT-5）
+
+1. 投喂 6+1 文件（STATUS.md / CLAUDE.md / WORKFLOW.md 等）。
+2. GPT-5 与人类讨论 Today（例如 Day7），完成技术调研与接口契约；必要时产出 ADR/PoC/阈值（参见第 2 节“工程交付物”）。
+3. GPT-5 输出 **STATUS.md 的 Today 段定稿**；人类人工 diff/merge 并标注为 LOCKED。
+
+### Step 1 — 拆分任务（Claude，默认 SSOT）
+
+1. Claude 读取 `STATUS.md` 的 Today（LOCKED）作为唯一来源。
+2. 若与对话内容不一致 → 输出 `INCONSISTENCY_REPORT` 并给出仅修改 `STATUS.md` 的 diff 提案，停止实现。
+3. 一致则生成 **Task Cards**（1 任务 = 1 卡），格式遵循 `WORKFLOW.md`“Task Card Format”。
+
+### Step 2 — 审卡（GPT-5）
+
+1. 人类将 Task Cards 喂给 GPT-5；GPT-5 审查与微调，不改变任务边界。
+2. 产出 **Approved & 优化后的执行 Prompt**（仍保持 Task Card 结构），准备执行。
+
+### Step 3 — 执行任务（两种模式）
+
+- **A. 默认执行（SSOT）**
+  - Claude 按 `STATUS.md` Today 对号执行最小 diff；不一致则返回 `INCONSISTENCY_REPORT`。
+- **B. 单卡直执（DX）**
+  - 适用于“方案定稿 → 产卡 → 审卡”三次确认后的卡片。
+  - Claude 不再回读 `STATUS.md`，仅按 Prompt 头部与白名单执行：
+    ```
+    MODE: DIRECT_EXECUTION
+    CARD_TITLE: <标题>
+    ALLOWED_FILES:
+      - <相对路径1>
+      - <相对路径2>
+    ```
+  - 任何超出 `ALLOWED_FILES` 的改动 → `SCOPE_VIOLATION` 并停止。
+  - 输出仅包含 unified diffs 与最小 Runbook（迁移/启动/验证命令），不夹带解释性长文。
+
+### Step 4 — 验收与回放
+
+1. 按 Task Card 的验收标准逐卡验证（curl / pytest / alembic 等）。
+2. 全部通过后做一次回归：
+   - `alembic upgrade head`
+   - 启动 API 与运行所有验证脚本
+   - 手工抽查关键路由
+3. 需要可重复性与对比时，使用第 3 节的 **Repro Bundle** 与 **Golden Traces**。
+4. 更新 `STATUS.md` 的 Done / Variance / Next，结束当日工作。

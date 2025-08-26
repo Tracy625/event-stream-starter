@@ -1,0 +1,35 @@
+# Example risk rules for offline/degraded mode evaluation
+# Copy to risk_rules.yml and customize for your needs
+
+# Blacklisted addresses (always red)
+blacklist:
+  - "0x0000000000000000000000000000000000000000"
+  - "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  - "0xbad0000000000000000000000000000000000000"
+
+# Whitelisted addresses (always green)
+whitelist:
+  - "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
+  - "0xdac17f958d2ee523a2206206994597c13d831ec7"  # USDT
+  - "0x6b175474e89094c44da98b954eedeac495271d0f"  # DAI
+
+# Known honeypot patterns
+honeypot_patterns:
+  - "safemoon"
+  - "babydoge"
+  - "floki"
+
+# Tax thresholds (percentage)
+thresholds:
+  buy_tax_red: 10
+  sell_tax_red: 10
+  buy_tax_yellow: 5
+  sell_tax_yellow: 5
+
+# LP lock requirements (days)
+lp_requirements:
+  minimum_lock_days: 30
+  preferred_lock_days: 180
+
+# Default risk for unknown tokens
+default_risk: "yellow"
