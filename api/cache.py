@@ -33,7 +33,16 @@ except Exception:  # 本地没装也别炸
 _redis_client = None
 
 
-
+def get_redis_client():
+    """Get Redis client singleton"""
+    global _redis_client
+    if _redis_client is None and redis is not None:
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        try:
+            _redis_client = redis.from_url(redis_url, decode_responses=False)
+        except Exception as e:
+            log_json(stage="redis.connect.error", error=str(e))
+    return _redis_client
 
 
 def _make_cache_key(func_name: str, args: Tuple, kwargs: dict) -> str:

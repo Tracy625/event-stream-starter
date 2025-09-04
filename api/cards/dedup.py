@@ -1,94 +1,102 @@
-"""Card deduplication and recheck queue management"""
+"""State-based deduplication for card generation"""
 import os
-import json
-import redis
-from typing import Optional
+from typing import Tuple
+from api.metrics import log_json
+from api.cache import get_redis_client
 
-def log_json(stage: str, **kwargs):
-    """Structured JSON logging"""
-    log_entry = {"stage": stage, **kwargs}
-    print(f"[JSON] {json.dumps(log_entry)}")
 
-def get_redis_client() -> Optional[redis.Redis]:
-    """Get Redis client from environment"""
-    try:
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        return redis.from_url(redis_url, decode_responses=True)
-    except Exception as e:
-        log_json(stage="card.redis.error", error=str(e))
-        return None
-
-def should_send(event_key: str, ttl_s: int = 1800) -> bool:
+def make_state_version(event: dict) -> str:
     """
-    Check if card should be sent (deduplication)
+    Generate state version string from event
     
-    Args:
-        event_key: Unique event identifier
-        ttl_s: TTL in seconds for dedup window (default 30 min)
-        
+    Format: {state}|{risk_level}|degrade:{0|1}|v1
+    """
+    state = event.get("state", "candidate")
+    risk_level = event.get("risk_level", "unknown")
+    
+    # Extract degrade flag from states dict
+    states = event.get("states", {})
+    # Degrade if explicitly set OR if risk_level is gray
+    degrade = states.get("degrade", False) or (risk_level == "gray")
+    degrade_flag = "1" if degrade else "0"
+    
+    state_version = f"{state}|{risk_level}|degrade:{degrade_flag}|v1"
+    
+    # Log version creation
+    log_json(
+        stage="dedup.make_version",
+        event_key=event.get("event_key", ""),
+        state=state,
+        risk_level=risk_level,
+        degrade=degrade,  # boolean, not string
+        state_version=state_version
+    )
+    
+    return state_version
+
+
+def should_emit(event_key: str, state_version: str) -> Tuple[bool, str]:
+    """
+    Check if event should be emitted based on state change
+    
     Returns:
-        True if should send (first time), False if duplicate
+        (should_emit, reason)
     """
-    try:
-        r = get_redis_client()
-        if not r:
-            # Redis unavailable, allow send (no dedup)
-            log_json(stage="card.dedup.bypass", event_key=event_key)
-            return True
-            
-        key = f"card:sent:{event_key}"
-        
-        # Try to set with NX (only if not exists)
-        result = r.set(key, "1", nx=True, ex=ttl_s)
-        
-        if result:
-            # First time, should send
-            log_json(stage="card.dedup.miss", event_key=event_key)
-            return True
-        else:
-            # Already sent within TTL window
-            log_json(stage="card.dedup.hit", event_key=event_key)
-            return False
-            
-    except Exception as e:
-        log_json(
-            stage="card.redis.error",
-            operation="dedup",
-            error=str(e),
-            event_key=event_key
-        )
-        # On error, allow send (no dedup)
-        return True
-
-def add_to_recheck(event_key: str, priority: int) -> None:
-    """
-    Add event to recheck queue
+    if not event_key:
+        return True, "no_event_key"
     
-    Args:
-        event_key: Event identifier to recheck
-        priority: Priority score (lower = higher priority)
-    """
     try:
-        r = get_redis_client()
-        if not r:
-            # Redis unavailable, skip recheck queue
-            log_json(stage="card.recheck.bypass", event_key=event_key)
-            return
-            
-        # Add to sorted set with priority as score
-        r.zadd("recheck:hot", {event_key: priority})
+        redis_client = get_redis_client()
+        if not redis_client:
+            return True, "redis_unavailable"
         
+        # Check stored version
+        redis_key = f"dedup:{event_key}"
+        stored_version = redis_client.get(redis_key)
+        
+        # Handle both bytes and string returns from Redis
+        if stored_version is not None and isinstance(stored_version, bytes):
+            stored_version = stored_version.decode('utf-8')
+        
+        if stored_version is None:
+            # First time seeing this event_key
+            decision = True
+            reason = "first_seen"
+        elif stored_version == state_version:
+            # Same state, skip
+            decision = False
+            reason = "state_unchanged"
+        else:
+            # State changed, allow
+            decision = True
+            reason = "state_changed"
+        
+        # Log decision
         log_json(
-            stage="card.recheck.add",
+            stage="dedup.check",
             event_key=event_key,
-            priority=priority
+            stored=stored_version,
+            incoming=state_version,
+            decision="emit" if decision else "skip",
+            reason=reason
         )
+        
+        return decision, reason
         
     except Exception as e:
-        log_json(
-            stage="card.redis.error",
-            operation="recheck",
-            error=str(e),
-            event_key=event_key
-        )
-        # Silently fail, don't interrupt flow
+        # On error, allow emission
+        log_json(stage="dedup.check", event_key=event_key, error=str(e))
+        return True, "check_error"
+
+
+def mark_emitted(event_key: str, state_version: str) -> None:
+    """Mark event as emitted with state version"""
+    try:
+        redis_client = get_redis_client()
+        if redis_client:
+            redis_key = f"dedup:{event_key}"
+            ttl = int(os.environ.get("DEDUP_TTL_SEC", "3600"))
+            redis_client.setex(redis_key, ttl, state_version)
+            log_json(stage="dedup.store", event_key=event_key, state_version=state_version, ttl=ttl)
+    except Exception as e:
+        log_json(stage="dedup.store", event_key=event_key, error=str(e))

@@ -25,7 +25,7 @@
     },
     "token_info": {
       "type": "object",
-      "required": ["symbol", "ca_norm", "chain"],
+      "required": ["symbol", "chain"],
       "additionalProperties": false,
       "properties": {
         "symbol": {
@@ -163,6 +163,29 @@
     },
     "legal_note": {
       "type": "string"
+    },
+    "source_level": {
+      "type": "string",
+      "enum": ["rumor", "confirmed"]
+    },
+    "features_snapshot": {
+      "type": "object",
+      "required": ["active_addrs", "top10_share", "growth_30m", "stale"],
+      "additionalProperties": false,
+      "properties": {
+        "active_addrs": {
+          "type": ["number", "null"]
+        },
+        "top10_share": {
+          "type": ["number", "null"]
+        },
+        "growth_30m": {
+          "type": ["number", "null"]
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }
