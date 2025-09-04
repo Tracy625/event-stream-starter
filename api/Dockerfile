@@ -7,7 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # Hugging Face 本地缓存，避免每次冷启动都下模型
     HF_HOME=/opt/hf \
     OMP_NUM_THREADS=1 \
-    MKL_NUM_THREADS=1
+    MKL_NUM_THREADS=1 \
+    PYTHONPATH=/app
 
 WORKDIR /app
 
@@ -29,7 +30,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # 仅在依赖安装成功后再复制源代码，避免无谓重建
 COPY api /app/api
-COPY scripts /app/scripts
+
 
 # 为了让 Uvicorn 在容器里更稳（不必须）
 EXPOSE 8000

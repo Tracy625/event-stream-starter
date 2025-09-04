@@ -1,17 +1,19 @@
 Database Schema Specification
 
 TL;DR
-• Current Alembic Version: 006
+• Current Alembic Version: 007
 • Recent Changes:
-• 2025-08-26 (Day7): 新增 goplus_cache 表 + signals 扩展 goplus 字段
+• 2025-08-26 (Day7): signals 扩展 goplus 字段（goplus_cache 表见 Rev 005）
+• 2025-08-31 (Day8): 新增 configs/x_kol.yaml 与验收脚本 verify_x_kol.py；raw_posts 使用 metadata JSON 扩展存储 tweet_id 等字段，无数据库迁移
 • 2025-08-25 (Day6): events 表新增精炼结果与执行元数据列（refined*\* 与 refine*\*），新增 2 个索引；读路径不依赖新列，向后兼容
-• 2025-08-24 (Day6): events 表新增精炼结果与执行元数据列（refined*\* 与 refine*\*），新增 2 个索引；读路径不依赖新列，向后兼容
 • 2025-08-23 (Day5): events 表幂等迁移，新增 10 列 + 2 索引（保留旧列）
 • 2025-08-22 (Day4): 接入 HuggingFace 情感分析与关键词抽取，更新相关 ENV
 • 2025-08-21 (Day3+): 增加 metrics/cache/bench，补充结构化日志与延迟预算
+• 2025-09-04 (Day9): signals 扩展 topic 字段（话题卡最小链路）
 
 Revision: 006（down_revision='005'）
 升级命令: alembic upgrade head
+容器环境示例: docker compose -f infra/docker-compose.yml exec -T api alembic upgrade head
 回滚建议: 业务侧可通过 REFINE_BACKEND=rules 立即降级；数据库列为增量，通常不需要回滚。如需清理：alembic downgrade 005。
 
 ⸻
@@ -22,6 +24,7 @@ raw_posts
 • Day1 初始建表（id/source/author/text/ts/urls）。
 • Day2 增加 token_ca/symbol。
 • Day4 增加 sentiment_label/sentiment_score/keywords/is_candidate。
+• Day8 X KOL 推文采集：数据入库 raw_posts，额外信息（tweet_id 等）存储于 metadata JSON，不涉及 schema 迁移
 
     •	id BIGSERIAL PRIMARY KEY (Day1)
     •	source TEXT NOT NULL (Day1)
@@ -29,6 +32,7 @@ raw_posts
     •	text TEXT NOT NULL (Day1)
     •	ts TIMESTAMPTZ NOT NULL (Day1)
     •	urls JSONB DEFAULT '[]'::jsonb (Day1)
+    •	metadata JSONB DEFAULT '{}'::jsonb (Day1，Day8 起用于存 tweet_id 等扩展信息)
     •	token_ca TEXT (Day2)
     •	symbol TEXT (Day2)
     •	is_candidate BOOLEAN DEFAULT FALSE (Day4)
@@ -70,7 +74,7 @@ Day5（事件聚合扩展）
 • evidence_count INTEGER NOT NULL DEFAULT 0 (Day5)
 • candidate_score DOUBLE PRECISION NOT NULL DEFAULT 0 (Day5)
 • keywords_norm JSONB (Day5)
-• version TEXT NOT NULL DEFAULT ‘v1’ (Day5)
+• version TEXT NOT NULL DEFAULT 'v1' (Day5)
 • last_sentiment TEXT (Day5)
 • last_sentiment_score DOUBLE PRECISION (Day5)
 
@@ -108,9 +112,10 @@ signals
 
 说明
 • Day1 初始建表（后续阶段消费 events 结果）
-• Day11 增加 heat_slope 字段，用于存储热度斜率
-• Day13 确认 goplus/dex/heat 字段均需写入，作为规则引擎输入/输出的落地表
+• Day11（计划）增加 heat_slope 字段，用于存储热度斜率
+• Day13（计划）确认 goplus/dex/heat 字段均需写入，作为规则引擎输入/输出的落地表
 • Day7 扩展 goplus 字段，新增枚举类型及多字段支持
+• Day9 扩展 topic 字段，用于 Meme 话题卡最小链路
 
     • id BIGSERIAL PRIMARY KEY (Day1)
     • event_key TEXT REFERENCES events(event_key) (Day1)
@@ -126,6 +131,18 @@ signals
     • dex_volume_1h DOUBLE PRECISION (Day1)
     • heat_slope DOUBLE PRECISION (Day11)
     • ts TIMESTAMPTZ DEFAULT now() (Day1)
+    • topic_id TEXT (Day9)
+    • topic_entities TEXT[] (Day9)
+    • topic_keywords TEXT[] (Day9)
+    • topic_slope_10m DOUBLE PRECISION (Day9)
+    • topic_slope_30m DOUBLE PRECISION (Day9)
+    • topic_mention_count INTEGER (Day9)
+    • topic_confidence DOUBLE PRECISION (Day9)
+    • topic_sources TEXT[] (Day9)
+    • topic_evidence_links JSONB DEFAULT '[]'::jsonb (Day9)
+    • topic_merge_mode TEXT (Day9)
+    • calc_version TEXT DEFAULT 'topic_v1' (Day9)
+    • degrade BOOLEAN DEFAULT FALSE (Day9)
 
 Indexes
 • CREATE INDEX ON signals (event_key, ts DESC); (Day1)
@@ -159,12 +176,15 @@ Indexes
 Alembic Migration History
 
 Revision Date Content
-006 2025-08-26 signals 扩展 goplus\__ 字段 (risk/tax/lp_lock_days/honeypot)，新增表 goplus_cache
+006 2025-08-26 signals 扩展 goplus\__ 字段 (risk/tax/lp_lock_days/honeypot)
 005 2025-08-25 Add goplus_cache table (迁移)
 004 2025-08-24 events 新增 refined_\* 与 refine\*\* 列；新增索引 idx_events_refine_ts、idx_events_refine_ok
 003 2025-08-23 events 幂等迁移：新增 10 列 + 2 索引，保留旧列
 002 2025-08-22 events 增加 score 列
 001 2025-08-21 初始 schema：创建 raw_posts、events、signals
+007 2025-09-04 signals 扩展 topic 字段 (Meme 话题卡最小链路)
+
+注：Day8 无数据库迁移，Revision 保持 006
 
 ⸻
 
@@ -192,7 +212,7 @@ docker compose -f infra/docker-compose.yml exec -T db \
 docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c \
 "SELECT column_name, data_type
 FROM information_schema.columns
-WHERE table_name='events' AND column_name LIKE 'refine%' OR column_name LIKE 'refined%';"
+WHERE table_name='events' AND (column_name LIKE 'refine%' OR column_name LIKE 'refined%');"
 
 3. 校验索引是否存在
 

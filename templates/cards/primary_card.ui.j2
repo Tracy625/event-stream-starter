@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        .card {
+            border: 2px solid {% if card_data.risk_level == 'red' %}#ff4444{% elif card_data.risk_level == 'yellow' %}#ffaa00{% else %}#44ff44{% endif %};
+            border-radius: 8px;
+            padding: 16px;
+            margin: 8px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #ffffff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .risk-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-weight: bold;
+            color: white;
+            background: {% if card_data.risk_level == 'red' %}#ff4444{% elif card_data.risk_level == 'yellow' %}#ffaa00{% else %}#44ff44{% endif %};
+        }
+        .token-info {
+            margin: 12px 0;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin: 16px 0;
+        }
+        .metric-item {
+            background: #f5f5f5;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .metric-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+        }
+        .metric-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+        .risk-factors {
+            background: #fff3cd;
+            border-left: 4px solid #ffaa00;
+            padding: 12px;
+            margin: 12px 0;
+        }
+        .security-summary {
+            background: #f0f8ff;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 12px 0;
+        }
+        .footer {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid #e0e0e0;
+            font-size: 12px;
+            color: #666;
+        }
+        .contract-address {
+            font-family: monospace;
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        .degraded-warning {
+            background: #fff3cd;
+            color: #856404;
+            padding: 8px;
+            border-radius: 4px;
+            margin: 8px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="risk-badge">
+            {% if card_data.risk_level == 'red' %}HIGH RISK
+            {% elif card_data.risk_level == 'yellow' %}MEDIUM RISK
+            {% else %}LOW RISK{% endif %}
+        </div>
+        
+        <div class="token-info">
+            <h2>{{ card_data.token_info.symbol }} ({{ card_data.token_info.chain | upper }})</h2>
+            <p>Contract: <span class="contract-address">{{ card_data.token_info.ca_norm[:8] }}...{{ card_data.token_info.ca_norm[-6:] }}</span></p>
+            <p><strong>{{ card_data.risk_note }}</strong></p>
+        </div>
+        
+        <div class="metrics">
+            <div class="metric-item">
+                <div class="metric-label">Price</div>
+                <div class="metric-value">
+                    {%- if card_data.metrics.price_usd -%}
+                    ${{ "%.4f" | format(card_data.metrics.price_usd) }}
+                    {%- else -%}N/A{%- endif -%}
+                </div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">Liquidity</div>
+                <div class="metric-value">
+                    {%- if card_data.metrics.liquidity_usd -%}
+                    ${{ "{:,.0f}".format(card_data.metrics.liquidity_usd) }}
+                    {%- else -%}N/A{%- endif -%}
+                </div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">FDV</div>
+                <div class="metric-value">
+                    {%- if card_data.metrics.fdv -%}
+                    ${{ "{:,.0f}".format(card_data.metrics.fdv) }}
+                    {%- else -%}N/A{%- endif -%}
+                </div>
+            </div>
+            {%- if card_data.metrics.ohlc and card_data.metrics.ohlc.h24 and card_data.metrics.ohlc.h24.o %}
+            <div class="metric-item">
+                <div class="metric-label">24h Change</div>
+                <div class="metric-value">{{ "%.2f" | format(card_data.metrics.ohlc.h24.o) }}%</div>
+            </div>
+            {%- endif %}
+        </div>
+        
+        {%- if card_data.risk_level == 'red' and card_data.rules_fired %}
+        <div class="risk-factors">
+            <strong>⚠️ Risk Factors:</strong>
+            <ul>
+            {%- for rule in card_data.rules_fired %}
+                <li>{{ rule | e }}</li>
+            {%- endfor %}
+            </ul>
+        </div>
+        {%- endif %}
+        
+        {%- if card_data.evidence and card_data.evidence.goplus_raw and card_data.evidence.goplus_raw.summary %}
+        <div class="security-summary">
+            <strong>Security Summary:</strong><br>
+            {{ card_data.evidence.goplus_raw.summary[:200] | e }}{{ "..." if card_data.evidence.goplus_raw.summary|length > 200 else "" }}
+        </div>
+        {%- endif %}
+        
+        {%- if card_data.states.degrade %}
+        <div class="degraded-warning">
+            ⚠️ Data degraded: {{ card_data.states.reason | e }}
+        </div>
+        {%- endif %}
+        
+        <div class="footer">
+            <p><strong>Verify:</strong> <a href="{{ card_data.verify_path | e }}">{{ card_data.verify_path | e }}</a></p>
+            {%- if card_data.legal_note %}
+            <p><em>{{ card_data.legal_note | e }}</em></p>
+            {%- endif %}
+            <p><em>Data as of: {{ card_data.data_as_of | e }}</em></p>
+            <p style="font-size: 10px; color: #999;">
+                Sources: {{ card_data.sources.security_source | e }} / {{ card_data.sources.dex_source | e }}
+                {%- if card_data.states.cache %} (cached){%- endif %}
+            </p>
+        </div>
+    </div>
+</body>
+</html>

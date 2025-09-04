@@ -1,0 +1,46 @@
+{%- if card_data.risk_level == 'red' -%}
+🔴 **HIGH RISK ALERT**
+{%- elif card_data.risk_level == 'yellow' -%}
+🟡 **MEDIUM RISK ALERT**
+{%- else -%}
+🟢 **LOW RISK SIGNAL**
+{%- endif %}
+
+**Token:** {{ card_data.token_info.symbol }} ({{ card_data.token_info.chain | upper }})
+**Contract:** `{{ card_data.token_info.ca_norm[:6] }}...{{ card_data.token_info.ca_norm[-4:] }}`
+**Risk:** {{ card_data.risk_note }}
+
+📊 **Metrics**
+• Price: ${{ "%.4f" | format(card_data.metrics.price_usd) if card_data.metrics.price_usd else "N/A" }}
+• Liquidity: ${{ "{:,.0f}".format(card_data.metrics.liquidity_usd) if card_data.metrics.liquidity_usd else "N/A" }}
+• FDV: ${{ "{:,.0f}".format(card_data.metrics.fdv) if card_data.metrics.fdv else "N/A" }}
+
+{%- if card_data.metrics.ohlc and card_data.metrics.ohlc.h24 and card_data.metrics.ohlc.h24.o %}
+• 24h Change: {{ "%.2f" | format(card_data.metrics.ohlc.h24.o) }}%
+{%- endif %}
+
+{%- if card_data.risk_level == 'red' and card_data.rules_fired %}
+
+⚠️ **Risk Factors:**
+{%- for rule in card_data.rules_fired %}
+• {{ rule }}
+{%- endfor %}
+{%- endif %}
+
+{%- if card_data.evidence and card_data.evidence.goplus_raw and card_data.evidence.goplus_raw.summary %}
+
+📝 **Security Summary:**
+{{ card_data.evidence.goplus_raw.summary[:200] }}{{ "..." if card_data.evidence.goplus_raw.summary|length > 200 else "" }}
+{%- endif %}
+
+📍 **Verify:** {{ card_data.verify_path }}
+
+{%- if card_data.states.degrade %}
+⚠️ _Data degraded: {{ card_data.states.reason }}_
+{%- endif %}
+
+{%- if card_data.legal_note %}
+_{{ card_data.legal_note }}_
+{%- endif %}
+
+_Data as of: {{ card_data.data_as_of }}_

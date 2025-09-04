@@ -1,0 +1,17 @@
+# Topic blacklist - suppress these entities
+blacklist:
+  - gm
+  - gn
+  - wagmi
+  - ngmi
+  - ser
+  - fren
+  - wen
+  - lfg
+  - dyor
+  - nfa
+  - fomo
+  - fud
+  - hodl
+  - rekt
+  - anon

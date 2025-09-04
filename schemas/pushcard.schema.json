@@ -1,0 +1,168 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "pushcard",
+  "type": "object",
+  "required": [
+    "type",
+    "risk_level",
+    "token_info",
+    "metrics",
+    "sources",
+    "states",
+    "risk_note",
+    "verify_path",
+    "data_as_of"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["primary", "secondary"]
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": ["red", "yellow", "green", "gray"]
+    },
+    "token_info": {
+      "type": "object",
+      "required": ["symbol", "ca_norm", "chain"],
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "type": "string"
+        },
+        "ca_norm": {
+          "type": "string",
+          "pattern": "^0x[a-fA-F0-9]{40}$"
+        },
+        "chain": {
+          "type": "string",
+          "enum": ["eth", "bsc", "base", "arb", "op", "sol"]
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["price_usd", "liquidity_usd", "fdv", "ohlc"],
+      "additionalProperties": false,
+      "properties": {
+        "price_usd": {
+          "type": ["number", "null"]
+        },
+        "liquidity_usd": {
+          "type": ["number", "null"]
+        },
+        "fdv": {
+          "type": ["number", "null"]
+        },
+        "ohlc": {
+          "type": "object",
+          "required": ["m5", "h1", "h24"],
+          "additionalProperties": false,
+          "properties": {
+            "m5": {
+              "type": "object",
+              "required": ["o", "h", "l", "c"],
+              "additionalProperties": false,
+              "properties": {
+                "o": {"type": ["number", "null"]},
+                "h": {"type": ["number", "null"]},
+                "l": {"type": ["number", "null"]},
+                "c": {"type": ["number", "null"]}
+              }
+            },
+            "h1": {
+              "type": "object",
+              "required": ["o", "h", "l", "c"],
+              "additionalProperties": false,
+              "properties": {
+                "o": {"type": ["number", "null"]},
+                "h": {"type": ["number", "null"]},
+                "l": {"type": ["number", "null"]},
+                "c": {"type": ["number", "null"]}
+              }
+            },
+            "h24": {
+              "type": "object",
+              "required": ["o", "h", "l", "c"],
+              "additionalProperties": false,
+              "properties": {
+                "o": {"type": ["number", "null"]},
+                "h": {"type": ["number", "null"]},
+                "l": {"type": ["number", "null"]},
+                "c": {"type": ["number", "null"]}
+              }
+            }
+          }
+        }
+      }
+    },
+    "sources": {
+      "type": "object",
+      "required": ["security_source", "dex_source"],
+      "additionalProperties": false,
+      "properties": {
+        "security_source": {
+          "type": "string"
+        },
+        "dex_source": {
+          "type": "string"
+        }
+      }
+    },
+    "states": {
+      "type": "object",
+      "required": ["cache", "degrade", "stale", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "type": "boolean"
+        },
+        "degrade": {
+          "type": "boolean"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "goplus_raw": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "summary": {
+              "type": "string",
+              "maxLength": 512
+            }
+          }
+        }
+      }
+    },
+    "risk_note": {
+      "type": "string"
+    },
+    "verify_path": {
+      "type": "string"
+    },
+    "data_as_of": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T.*Z$"
+    },
+    "rules_fired": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "legal_note": {
+      "type": "string"
+    }
+  }
+}

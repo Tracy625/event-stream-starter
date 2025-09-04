@@ -1,0 +1,21 @@
+# Topic whitelist - boost confidence for these entities
+whitelist:
+  - etf
+  - bitcoin
+  - ethereum
+  - halving
+  - cz
+  - binance
+  - coinbase
+  - election
+  - trump
+  - layer2
+  - l2
+  - zkevm
+  - rollup
+  - defi
+  - gamefi
+  - nft
+  - metaverse
+  - ai
+  - aiagent
