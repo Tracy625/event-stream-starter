@@ -18,10 +18,22 @@ Usage:
 """
 
 import time
-import functools
 import threading
-from typing import Any, Callable, Tuple
+import os
+import functools
+from typing import Any, Callable, Optional, Tuple
+
 from api.metrics import log_json
+
+try:
+    import redis  # type: ignore
+except Exception:  # 本地没装也别炸
+    redis = None  # type: ignore
+
+_redis_client = None
+
+
+
 
 
 def _make_cache_key(func_name: str, args: Tuple, kwargs: dict) -> str:
@@ -147,4 +159,55 @@ def memoize_ttl(seconds: int) -> Callable:
         
         return wrapper
     
+    return decorator
+
+# --- compatibility shims for Day9.1 ---
+
+
+def get_redis_client() -> Optional["redis.Redis"]:
+    """
+    Return a Redis client if available, else None.
+    Env: REDIS_URL or REDIS_HOST/REDIS_PORT/REDIS_DB
+    """
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    if redis is None:
+        return None
+    url = os.getenv("REDIS_URL")
+    if url:
+        _redis_client = redis.from_url(url, decode_responses=True)
+        return _redis_client
+    host = os.getenv("REDIS_HOST", "redis")
+    port = int(os.getenv("REDIS_PORT", "6379"))
+    db = int(os.getenv("REDIS_DB", "0"))
+    _redis_client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+    return _redis_client
+
+def memoize_ttl(ttl_seconds: int):
+    """
+    Simple Redis-backed memoize. If Redis missing, it’s a no-op.
+    Only cache simple repr-able results.
+    """
+    def decorator(func: Callable):
+        rc = get_redis_client()
+        if rc is None:
+            return func
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            key = f"memo:{func.__module__}.{func.__name__}:{repr(args)}:{repr(sorted(kwargs.items()))}"
+            val = rc.get(key)
+            if val is not None:
+                try:
+                    return eval(val)
+                except Exception:
+                    pass
+            result = func(*args, **kwargs)
+            try:
+                rc.setex(key, ttl_seconds, repr(result))
+            except Exception:
+                pass
+            return result
+        return wrapper
     return decorator

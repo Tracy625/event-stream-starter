@@ -13,3 +13,8 @@ app.conf.update(
     timezone='UTC',
     enable_utc=True,
 )
+
+app.autodiscover_tasks(['worker.jobs'])
+
+if __name__ == "__main__":
+    print("Celery app loaded:", app)

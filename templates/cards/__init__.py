@@ -1,0 +1,1 @@
+"""Card template definitions for push notifications"""

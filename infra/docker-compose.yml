@@ -35,12 +35,21 @@ services:
     volumes:
       - ../api:/app/api:ro
       - ../rules:/app/rules:ro
+      - ../worker:/app/worker:ro
+      - ../configs:/app/configs:ro
+      - ../schemas:/app/schemas:ro
+      - ../templates:/app/templates:ro
     env_file: ./.env
     environment:
       PYTHONPATH: /app
       POSTGRES_URL: postgresql://app:app@db:5432/app
       REDIS_URL: redis://redis:6379/0
-      SECURITY_BACKEND: rules
+      SECURITY_BACKEND: goplus
+      
+      TELEGRAM_MODE: "mock"
+      TELEGRAM_MOCK_PATH: "/tmp/telegram_sandbox.jsonl"
+      TELEGRAM_SANDBOX_CHAT_ID: "123456"
+      TELEGRAM_BOT_TOKEN: ""     # 开发期置空，别去连真TG
     ports:
       - "8000:8000"
     depends_on:
@@ -57,12 +66,20 @@ services:
 
   worker:
     build:
-      context: ../worker
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: worker/Dockerfile
+    working_dir: /app
+    volumes:
+      - ..:/app
     env_file: ./.env
     environment:
       POSTGRES_URL: postgresql+psycopg2://app:app@db:5432/app
       REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: ${REDIS_URL}
+      CELERY_RESULT_BACKEND: ${REDIS_URL}
+      PYTHONPATH: /app:/app/worker/src
+    restart: always
+    command: sh -lc "celery -A worker.app worker -l info --pool=solo"
     depends_on:
       db:
         condition: service_healthy
@@ -75,3 +92,4 @@ services:
 
 volumes:
   postgres_data:
+

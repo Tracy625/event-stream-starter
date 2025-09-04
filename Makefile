@@ -115,3 +115,19 @@ demo-refine:
 	fi; \
 	docker compose -f infra/docker-compose.yml exec -T $$EXTRA_ENV \
 	  api bash -lc 'PYTHONPATH=/app python -m api.scripts.demo_refine'
+
+verify-topic:
+	@echo "Verifying topic signal API..."
+	cd infra && docker compose exec -T api python -m api.scripts.verify_topic_signal
+
+verify-topic-push:
+	@echo "Verifying topic push to Telegram..."
+	cd infra && docker compose exec -T api python -m api.scripts.verify_topic_push
+
+push-topic-digest:
+	@echo "Pushing daily topic digest..."
+	cd infra && docker compose exec -T worker python -c "from worker.jobs.push_topic_candidates import push_topic_digest; push_topic_digest()"
+
+seed-topic:
+	@if [ -z "$(topic)" ]; then echo "Usage: make seed-topic topic=t.XXXX"; exit 1; fi
+	docker compose -f infra/docker-compose.yml exec api bash -lc 'cd /app && python -m api.scripts.seed_topic_mentions $(topic)'

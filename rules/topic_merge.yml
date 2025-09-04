@@ -1,0 +1,40 @@
+# Topic merge rules and thresholds
+# These are defaults, can be overridden by environment variables
+
+merge_rules:
+  # Embedding similarity threshold (when HF backend available)
+  embedding_threshold: 0.80
+  
+  # Jaccard similarity fallback (when embedding not available)
+  jaccard_threshold: 0.50
+  
+  # Whitelist confidence boost
+  whitelist_boost: 0.05
+  
+  # Time windows
+  window_hours: 24
+  slope_window_10m: 10
+  slope_window_30m: 30
+  
+  # Rate limiting
+  topic_rate_limit_minutes: 60
+  
+  # Daily caps
+  daily_push_cap: 50
+  digest_max_items: 20
+
+# Merge strategies
+strategies:
+  - name: exact_match
+    description: Topics with identical entity sets
+    priority: 1
+    
+  - name: embedding_similarity
+    description: Topics with high semantic similarity
+    priority: 2
+    requires: EMBEDDING_BACKEND=hf
+    
+  - name: jaccard_similarity
+    description: Topics with overlapping keywords
+    priority: 3
+    fallback: true

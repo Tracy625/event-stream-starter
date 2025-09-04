@@ -1,5 +1,5 @@
-# Example risk rules for offline/degraded mode evaluation
-# Copy to risk_rules.yml and customize for your needs
+# Risk rules for offline/degraded mode evaluation
+# Extended for Day9.2 Primary card gate enforcement
 
 # Blacklisted addresses (always red)
 blacklist:
@@ -19,17 +19,35 @@ honeypot_patterns:
   - "babydoge"
   - "floki"
 
-# Tax thresholds (percentage)
-thresholds:
-  buy_tax_red: 10
-  sell_tax_red: 10
-  buy_tax_yellow: 5
-  sell_tax_yellow: 5
-
-# LP lock requirements (days)
-lp_requirements:
-  minimum_lock_days: 30
-  preferred_lock_days: 180
-
+# Risk thresholds - defines red/yellow/green classification
+risk_thresholds:
+  # Red triggers (critical risks)
+  honeypot_red: true        # honeypot=true -> red
+  buy_tax_red: 10           # buy_tax > 10% -> red
+  sell_tax_red: 10          # sell_tax > 10% -> red
+  
+  # Yellow triggers (warnings)
+  lp_lock_yellow_days: 30   # lp_lock_days < 30 -> yellow
+  buy_tax_yellow: 5         # buy_tax > 5% -> yellow (if not already red)
+  sell_tax_yellow: 5        # sell_tax > 5% -> yellow (if not already red)
+  
+  # Gray triggers (degraded state)
+  goplus_error_gray: true   # GoPlus status in {timeout,error} -> gray
+  
+# Degradation behavior
+degradation:
+  # When GoPlus is unavailable
+  on_timeout:
+    risk_color: "gray"
+    risk_note: "体检暂不可用，已降级"
+    forbid_green: true
+  on_error:
+    risk_color: "gray"
+    risk_note: "体检服务异常，已降级"
+    forbid_green: true
+    
 # Default risk for unknown tokens
 default_risk: "yellow"
+
+# Version tracking for risk_source field
+goplus_version: "v1.2"

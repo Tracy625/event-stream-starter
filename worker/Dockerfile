@@ -12,6 +12,11 @@ RUN pip install --no-cache-dir \
     alembic \
     python-dotenv
 
-COPY . .
+COPY api/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# 保留整个仓库给 worker 用
+COPY . /app
+ENV PYTHONPATH=/app:/app/worker/src
 
 CMD ["celery", "-A", "worker.app", "worker", "-l", "info"]
