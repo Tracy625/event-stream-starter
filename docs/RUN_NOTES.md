@@ -348,3 +348,67 @@
 
 - 依赖：`jsonschema`、`jinja2`、`redis` 已加入 `api/requirements.txt`
 - Redis keys：`card:sent:{event_key}`、`recheck:hot`
+
+================================================================
+
+## Day9.1 — Meme 话题卡最小链路 (2025-09-04)
+
+### 实现要点
+
+- 新增路由 `/signals/topic`（固定 14 字段输出，含 degrade/topic_merge_mode）
+- Pipeline：
+  - `worker/pipeline/is_memeable_topic.py`（KeyBERT + mini 判定）
+  - `worker/jobs/topic_aggregate.py`（24h 窗口聚合/合并/去重与限频）
+  - `worker/jobs/push_topic_candidates.py`（推送候选卡，走 Telegram 适配层）
+- 最小 Telegram 适配层：`api/services/telegram.py`（支持 `TELEGRAM_MODE=mock` 写入 `/tmp/telegram_sandbox.jsonl`）
+- 黑白名单与阈值：`configs/topic_blacklist.yml`、`configs/topic_whitelist.yml`、`rules/topic_merge.yml`
+- 斜率与窗口：Redis 存储分钟级计数，计算 `slope_10m`、`slope_30m`
+- 迁移：`api/alembic/versions/007_signals_topic_ext.py`（signals/events topic 相关字段）
+- 验收脚本：`api/scripts/verify_topic_signal.py`、`api/scripts/verify_topic_push.py`、`api/scripts/seed_topic_mentions.py`
+- Make 目标：`verify-topic`、`verify-topic-push`、`push-topic-digest`、`seed-topic`
+
+### 运行验收
+
+- 应用迁移
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api alembic -c /app/api/alembic.ini upgrade head
+  ```
+
+- 验证 API 输出与字段完整性
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python -m api.scripts.verify_topic_signal
+  ```
+
+- 检查规范化与合并模式（示例）
+
+  ```bash
+  curl -s "http://localhost:8000/signals/topic?entities=pepe,frog,meme" | jq '.topic_entities,.keywords,.sources,.topic_merge_mode'
+  ```
+
+- 注入样例数据并验证斜率（应为非零且 10m != 30m）
+
+  ```bash
+  TID=$(curl -s "http://localhost:8000/signals/topic?entities=pepe,frog,meme" | jq -r .topic_id)
+  docker compose -f infra/docker-compose.yml exec -T api python -m api.scripts.seed_topic_mentions "$TID"
+  curl -s "http://localhost:8000/signals/topic?topic_id=$TID" | jq '.slope_10m,.slope_30m'
+  ```
+
+- 验证 Telegram 推送（mock）
+
+  ```bash
+  TELEGRAM_MODE=mock TELEGRAM_MOCK_PATH=/tmp/telegram_sandbox.jsonl \
+  docker compose -f infra/docker-compose.yml exec -T api python -m api.scripts.verify_topic_push
+  ```
+
+- 检查 mock 输出文件
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api tail -n1 /tmp/telegram_sandbox.jsonl
+  ```
+
+### 备注
+
+- ENV：`DAILY_TOPIC_PUSH_CAP, TOPIC_WINDOW_HOURS, TOPIC_SLOPE_WINDOW_10M, TOPIC_SLOPE_WINDOW_30M, TOPIC_SIM_THRESHOLD, TOPIC_JACCARD_FALLBACK, TOPIC_WHITELIST_BOOST, MINI_LLM_TIMEOUT_MS, EMBEDDING_BACKEND, KEYBERT_BACKEND, TELEGRAM_MODE, TELEGRAM_MOCK_PATH, TELEGRAM_BOT_TOKEN, TELEGRAM_SANDBOX_CHAT_ID`
+- `topic_merge_mode` 默认 `normal`，仅在降级/回退时为 `fallback` 且 `degrade=true`
+- Mock 模式默认安全，不连接真实 Telegram；接入正式机器人时移除 `TELEGRAM_MODE=mock`
