@@ -412,3 +412,209 @@
 - ENV：`DAILY_TOPIC_PUSH_CAP, TOPIC_WINDOW_HOURS, TOPIC_SLOPE_WINDOW_10M, TOPIC_SLOPE_WINDOW_30M, TOPIC_SIM_THRESHOLD, TOPIC_JACCARD_FALLBACK, TOPIC_WHITELIST_BOOST, MINI_LLM_TIMEOUT_MS, EMBEDDING_BACKEND, KEYBERT_BACKEND, TELEGRAM_MODE, TELEGRAM_MOCK_PATH, TELEGRAM_BOT_TOKEN, TELEGRAM_SANDBOX_CHAT_ID`
 - `topic_merge_mode` 默认 `normal`，仅在降级/回退时为 `fallback` 且 `degrade=true`
 - Mock 模式默认安全，不连接真实 Telegram；接入正式机器人时移除 `TELEGRAM_MODE=mock`
+
+================================================================
+
+## Day9.2 — Primary 卡门禁 + 文案模板改造 (2025-09-05)
+
+### 实现要点
+
+- 扩展 `rules/risk_rules.yml`：强制 GoPlus 校验，不可伪绿；体检异常 → gray + 降级提示
+- 新增 `api/security/goplus.py`：本地 evaluator，去除 provider 依赖
+- 更新 `api/cards/generator.py`：Primary 卡强制经过 GoPlus gate；注入 `risk_source`、`risk_note`、`rules_fired`
+- 新增去重逻辑 `api/cards/dedup.py`：按 `state|risk_color|degrade` 作为 state_version；仅状态变化时允许重发
+- 模板更新：
+  - `templates/cards/primary_card.*`：统一“候选/假设 + 验证路径”，渲染 `risk_note`、`legal_note`、隐藏区 `rules_fired`
+  - `templates/cards/secondary_card.*`：新增 source_level、data_as_of、features_snapshot 占位
+- 新增 `api/utils/ca.py`：EVM CA 归一化，去重，is_official_guess 标记
+- `schemas/pushcard.schema.json` 扩展 gray 风险等级、可选 features_snapshot 与 source_level
+
+### 运行验收
+
+- GoPlus 体检校验
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api \
+    python api/scripts/verify_goplus_security.py | jq
+
+  ```
+
+- DEX 快照校验（防止回归）
+  docker compose -f infra/docker-compose.yml exec -T api \
+   python api/scripts/verify_dex_snapshot.py | jq
+
+- 模板与 Schema 校验
+  docker compose -f infra/docker-compose.yml exec -T api \
+   python api/scripts/validate_cards.py | jq ".pass"
+
+- CA 归一化校验（inline）
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.utils.ca import normalize_ca
+  print("eth upper+0X =>", normalize_ca("eth","0XDEADBEEF000000000000000000000000CAFEBABE"))
+  print("bsc no 0x =>", normalize_ca("bsc","abcdef0000000000000000000000000000000000"))
+  print("eth None =>", normalize_ca("eth", None))
+  print("sol base58? =>", normalize_ca("sol","4Nd1xxxx"))
+  PY
+
+- Secondary 卡增强检查（样例生成）
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python - <<PY
+  from api.cards.generator import generate_card
+  signals={"dex_snapshot":{"price_usd":1.0,"liquidity_usd":100.0,"fdv":1000.0,"ohlc":{"m5":{"o":1,"h":1,"l":1,"c":1},"h1":{"o":1,"h":1,"l":1,"c":1},"h24":{"o":1,"h":1,"l":1,"c":1}},"source":"dexscreener","cache":false,"stale":false,"degrade":false,"reason":""}}
+  event={"type":"secondary","risk_level":"yellow","token_info":{"symbol":"BAD","ca_norm":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","chain":"eth"},"verify_path":"/tx/0xdef","data_as_of":"2025-09-05T12:00:00Z"}
+  card=generate_card(event, signals); print(card.get("source_level"), card.get("features_snapshot"))
+  PY'
+
+================================================================
+
+## Day10 — BigQuery Project & Provider Integration (2025-09-05)
+
+### Implementation Points
+
+- `api/clients/bq_client.py`: BigQuery client with dry-run guard, timeout, and exponential backoff
+- `api/providers/onchain/bq_provider.py`: Template-based query execution with cost guards
+- `api/routes/onchain.py`: Health and freshness endpoints
+- `templates/sql/freshness_eth.sql`: Minimal partition-friendly query
+- Docker volumes: Mount `/app/infra/secrets` for GCP service account JSON
+- ENV: `GOOGLE_APPLICATION_CREDENTIALS`, `GCP_PROJECT`, `BQ_LOCATION`, `BQ_DATASET_RO`, `BQ_TIMEOUT_S`, `BQ_MAX_SCANNED_GB`, `ONCHAIN_BACKEND`
+
+### Running Acceptance
+
+- Prerequisites: Place service account JSON at `infra/secrets/gcp-sa.json` (DO NOT COMMIT)
+
+  ```bash
+  # Create secrets directory if not exists
+  mkdir -p infra/secrets
+  # Copy your service account key
+  cp ~/path/to/your-sa-key.json infra/secrets/gcp-sa.json
+  ```
+
+- Health check (connectivity + dry-run probe)
+
+  ```bash
+  curl -s http://localhost:8000/onchain/healthz | jq
+  # Expected: {"probe": 1, "row_count": 1, "dry_run_pass": true, "bq_bytes_scanned": <int>}
+  ```
+
+- Freshness check for Ethereum
+
+  ```bash
+  curl -s 'http://localhost:8000/onchain/freshness?chain=eth' | jq
+  # Expected: {"latest_block": <int>, "data_as_of": "<iso8601>", "chain": "eth"}
+  ```
+
+- Test cost guard (temporarily set tiny threshold)
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T -e BQ_MAX_SCANNED_GB=0 api \
+    sh -c 'curl -s http://localhost:8000/onchain/healthz | jq'
+  # Expected: {"degrade": true, "reason": "cost_guard", "bq_bytes_scanned": <int>}
+  ```
+
+- Test backend off mode
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T -e ONCHAIN_BACKEND=off api \
+    sh -c 'curl -s http://localhost:8000/onchain/freshness?chain=eth | jq'
+  # Expected: {"degrade": true, "reason": "bq_off"}
+  ```
+
+- Unsupported chain fallback
+
+  ```bash
+  curl -s 'http://localhost:8000/onchain/freshness?chain=polygon' | jq
+  # Expected: {"degrade": true, "reason": "unsupported_chain", "chain": "polygon"}
+  ```
+
+- Check structured logs (JSON format)
+
+  ```bash
+  docker compose -f infra/docker-compose.yml logs api | grep '"stage":"bq' | tail -5
+  # Should see: bq.dry_run, bq.query, bq.freshness logs with bq_bytes_scanned field
+  ```
+
+### Notes
+
+- All endpoints return HTTP 200 even for degraded responses (graceful degradation)
+- Cost guard prevents queries exceeding `BQ_MAX_SCANNED_GB` threshold
+- Dry-run is always executed first to estimate costs
+- Backend can be disabled via `ONCHAIN_BACKEND=off` for testing
+- Service account needs: BigQuery Job User role + Data Viewer on dataset
+
+================================================================
+
+## Day11 — Onchain SQL Templates & Guards (2025-09-07)
+
+### 验收要点
+
+- `/onchain/healthz` 为轻探针（dry-run 或 SELECT 1/LIMIT 1），不做重扫描
+- `/onchain/freshness?chain=eth` 返回 `latest_block` 与 `data_as_of`
+- `/onchain/query` 三模板可用：`active_addrs_window`、`token_transfers_window`、`top_holders_snapshot`
+- 统一返回字段：`data_as_of, data_as_of_lag, bq_bytes_scanned, cache_hit, approximate`
+- 成本护栏：先 dry-run，超 `BQ_MAX_SCANNED_GB` → `{ "degrade": "cost_guard" }`（HTTP 200）；真实执行强制 `maximum_bytes_billed`
+- 缓存：TTL 60–120 秒；命中 `cache_hit=true`；缓存检查发生在成本护栏之后
+
+### 运行验收
+
+- 健康与新鲜度
+
+  ```bash
+  curl -s http://localhost:8000/onchain/healthz | jq
+  curl -s 'http://localhost:8000/onchain/freshness?chain=eth' | jq
+
+  ```
+
+- 模板执行（1 小时窗口）
+
+NOW=$(date -u +%s); FROM=$(($NOW-3600))
+  curl -s "http://localhost:8000/onchain/query?template=token_transfers_window&address=0xdAC17F958D2ee523a2206206994597C13D831ec7&from_ts=${FROM}&to_ts=${NOW}&window_minutes=60" | jq
+  curl -s "http://localhost:8000/onchain/query?template=active_addrs_window&address=0xdAC17F958D2ee523a2206206994597C13D831ec7&from_ts=${FROM}&to_ts=${NOW}&window_minutes=60" | jq
+
+- 缓存命中（第二次应 cache_hit=true）
+
+NOW=$(date -u +%s); FROM=$(($NOW-3600))
+  curl -s "http://localhost:8000/onchain/query?template=token_transfers_window&address=0xdAC17F958D2ee523a2206206994597C13D831ec7&from_ts=${FROM}&to_ts=${NOW}&window_minutes=60" | jq >/dev/null
+  curl -s "http://localhost:8000/onchain/query?template=token_transfers_window&address=0xdAC17F958D2ee523a2206206994597C13D831ec7&from_ts=${FROM}&to_ts=${NOW}&window_minutes=60" | jq '.cache_hit'
+
+- 触发新鲜度守门（需要让 API 进程读取 env，修改后重启）
+
+  写入极小 SLO 并强制重建容器
+
+sed -i'' -e '/^FRESHNESS_SLO=/d' infra/.env; echo 'FRESHNESS_SLO=1' >> infra/.env
+docker compose -f infra/docker-compose.yml up -d --force-recreate
+
+调用接口，预期 data_as_of_lag=true
+
+curl -s "http://localhost:8000/onchain/query?template=active_addrs_window&address=0x0000000000000000000000000000000000000001&window_minutes=60" | jq '.data_as_of_lag'
+
+- 触发成本护栏（通过成本护栏后再查缓存，避免缓存短路）
+
+  设置扫描上限为 0 GB 并重启
+
+sed -i'' -e '/^BQ_MAX_SCANNED_GB=/d' infra/.env; echo 'BQ_MAX_SCANNED_GB=0' >> infra/.env
+docker compose -f infra/docker-compose.yml up -d --force-recreate
+
+调用接口，预期返回 { "degrade": "cost_guard", "cache_hit": false }
+
+curl -s "http://localhost:8000/onchain/query?template=active_addrs_window&address=0x0000000000000000000000000000000000000002&window_minutes=60" | jq '{degrade, cache_hit, bq_bytes_scanned}'
+
+- 回滚默认配置并复测
+
+恢复默认阈值并重启
+
+sed -i'' -e '/^FRESHNESS_SLO=/d' -e '/^BQ_MAX_SCANNED_GB=/d' infra/.env
+printf 'FRESHNESS_SLO=600\nBQ_MAX_SCANNED_GB=5\n' >> infra/.env
+docker compose -f infra/docker-compose.yml up -d --force-recreate
+
+健康与模板烟测
+
+curl -s http://localhost:8000/onchain/healthz | jq
+NOW=$(date -u +%s); FROM=$(($NOW-3600))
+  curl -s "http://localhost:8000/onchain/query?template=token_transfers_window&address=0xdAC17F958D2ee523a2206206994597C13D831ec7&from_ts=${FROM}&to_ts=${NOW}&window_minutes=60" | jq '.cache_hit, .data_as_of_lag'
+
+- 观测日志（可选）
+
+docker compose -f infra/docker-compose.yml logs api | egrep '"stage":"bq\\.(dry_run|query|cache_hit|sql_preview)"' | tail -20
+
+- 备注
+  “exec -e FRESHNESS_SLO=1 curl …” 这种写法不会影响已启动的 API 进程，请使用修改 infra/.env + 强制重建容器的方式让配置生效。
+  缓存检查顺序在成本护栏之后；因此即使存在缓存，超标的请求也会被 cost_guard 拦截。
