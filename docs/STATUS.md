@@ -183,37 +183,131 @@
     - `verify_topic_push` mock 模式输出到 `/tmp/telegram_sandbox.jsonl`，文案格式正确
   - Day9.1 Meme 话题卡最小链路功能完成，含最小 Telegram mock 适配层，验收通过。
 
+- Day9.2: Primary 卡门禁 + 文案模板改造 (verified)
+
+  - 目标：确保所有一级卡必须过 GoPlus，卡片文案全部改为“候选/假设 + 验证路径”，降低误导风险
+  - 任务：
+    - Primary 卡流程：候选（来源+疑似官方/非官方）→ GoPlus 体检 → 红黄绿风险标记
+    - 扩展 `rules/risk_rules.yml`：强制体检不通过即 red/yellow；体检异常时标记 gray + 降级提示
+    - 卡片渲染模板改造：新增 `risk_note` 字段，统一提示（高税/LP 未锁等），固定包含 `legal_note`
+    - Secondary 卡文案：来源分级（rumor/confirmed），必须显示验证路径与 `data_as_of`
+    - 新增 `normalize_ca(chain, ca)` 辅助方法，CA 归一化、多 CA 去重并标记 `is_official_guess`
+    - 推送防抖：同一 event_key 1 小时不重复，且仅状态变化（candidate→verified/downgraded/withdrawn）允许二次推送
+    - 降级一致性：GoPlus/DEX 出错时风险标 gray，并写入 `rules_fired`、`risk_source`
+  - 落地文件：
+    - `rules/risk_rules.yml`
+    - `api/security/goplus.py`
+    - `api/cards/generator.py`, `api/cards/dedup.py`
+    - `templates/cards/primary_card.tg.j2`, `templates/cards/primary_card.ui.j2`
+    - `templates/cards/secondary_card.tg.j2`, `templates/cards/secondary_card.ui.j2`
+    - `api/utils/ca.py`（新）
+    - `schemas/pushcard.schema.json`
+  - 验收通过：
+    - 3 个垃圾盘样本能被体检标红并推送 red 卡片
+    - GoPlus 不可用时卡片风险为 gray，且禁止出现 green
+    - Secondary 卡固定包含 `verify_path`、`data_as_of`、`source_level`，并预留 `features_snapshot`
+    - 模板文案统一为“候选/假设 + 验证路径”，含 `legal_note` 与隐藏字段 `rules_fired`
+    - 同一 event_key 仅“状态变化”允许二次推送
+    - `risk_source:"GoPlus@vX.Y"` 必填
+    - `normalize_ca` 生效，多 CA 去重并标注 `is_official_guess`
+
+- Day10: BigQuery 接入最小闭环 (done)
+
+  - 目标：打通云端链上数据仓库最小闭环（凭据、SDK、Provider、健康检查、成本守门），为后续候选 → 证据链路铺路。
+  - 任务：
+    - 新增 ENV：GCP_PROJECT, BQ_LOCATION, BQ_DATASET_RO, BQ_TIMEOUT_S, BQ_MAX_SCANNED_GB, ONCHAIN_BACKEND
+    - 新建 `api/clients/bq_client.py`，封装 dry_run/query/freshness，支持成本守门与最大计费字节限制
+    - 新建 `api/providers/onchain/bq_provider.py`，统一模板渲染、dry-run 守门、重试与 degrade 返回
+    - 更新 `api/routes/onchain.py`，新增 `/onchain/healthz` 与 `/onchain/freshness`
+    - 更新 compose 与 `.env.example`，挂载 SA JSON，落地 secrets 目录
+    - 日志结构化输出：bq_bytes_scanned, dry_run_pass, cost_guard_hit, maximum_bytes_billed, degrade
+  - 落地文件：
+    - `api/clients/bq_client.py`
+    - `api/providers/onchain/bq_provider.py`
+    - `api/routes/onchain.py`
+    - `templates/sql/freshness_eth.sql`
+    - `infra/docker-compose.yml`
+    - `.env.example`
+    - `api/utils/logging.py`（新）
+  - 验收通过：
+    - `/onchain/healthz` 返回 200，dry-run-only，无 row_count
+    - `/onchain/freshness?chain=eth` 返回最新块号与 data_as_of
+    - 将 BQ_MAX_SCANNED_GB 调小触发 cost_guard，接口 degrade:true 且不中断流程
+    - ONCHAIN_BACKEND=off 时返回 degrade:bq_off
+    - maximum_bytes_billed 在日志中记录（5GB = 5368709120 bytes）
+    - 日志包含 bq_bytes_scanned, cost_guard_hit, maximum_bytes_billed
+  - Notes：
+    - BQ_DATASET_RO 使用完整 project.dataset（例如 `bigquery-public-data.crypto_ethereum`）
+    - api/worker 均挂载 `/app/infra/secrets` 并加载 .env
+    - 所有错误均返回 200 + {degrade:true,...}，候选流不中断
+
+- Day11: SQL 模板与新鲜度守门 + 成本护栏 (done)
+
+- 目标：固化 3 个 ETH SQL 模板，并将 freshness 预检、dry-run 成本护栏、模板 LINT、短缓存接入业务流，避免一演示就账单爆炸。
+
+  - 任务：
+    - 新增 3 个 SQL 模板：
+      - `templates/sql/eth/active_addrs_window.sql`
+      - `templates/sql/eth/token_transfers_window.sql`
+      - `templates/sql/eth/top_holders_snapshot.sql`
+    - 新增 `/onchain/query` 路由，Provider 接入 freshness → dry-run → 成本护栏 → 缓存 → 真查 全链路
+    - Redis 缓存 TTL 抖动 60–120 秒；cache key: `bq:tpl:{tpl}:{address}:{window}:{hash(sql)}`
+    - 模板强制 LIMIT 与时间窗口；返回统一字段 `data_as_of`
+    - LINT：缺 LIMIT / 缺时间窗口 / 尾部垃圾字符 / 禁止 `DATE(block_timestamp)` → {stale:true, degrade:"template_error"}
+    - 健康探针与 freshness 查询使用轻量 SQL，不做全表扫描
+    - `.env.example` 新增 `FRESHNESS_SLO`
+  - 落地文件：
+    - `api/providers/onchain/bq_provider.py`
+    - `api/routes/onchain.py`
+    - `api/utils/cache.py`
+    - `templates/sql/eth/*.sql`
+    - `.env.example`
+  - 验收通过：
+    - 三模板返回字段完整，含 `data_as_of`
+    - 重复请求命中缓存：`cache_hit=true`
+    - FRESHNESS_SLO=10 时触发 `data_as_of_lag=true`
+    - BQ_MAX_SCANNED_GB=0 时返回 `{ "degrade": "cost_guard" }`，HTTP 200
+    - 模板不合规时返回 `{ "stale": true, "degrade": "template_error" }`，不中断整体流
+    - `/onchain/healthz` 为轻探针，不出现千万级 row_count
+    - BigQuery 请求均带 `maximum_bytes_billed`，日志可见
+  - Notes：
+    - 缓存检查顺序改为成本护栏之后，避免缓存短路护栏
+    - BigQuery 客户端统一走 `_get_client()`，移除错误的 `.client.query` 调用
+    - 触发 freshness/cost_guard 验证需改 compose/.env 并重启 API 容器
+
+- Day12: On-chain Features Light Table (done)
+
+- 目标：固化 BigQuery 上游的窗口化链上特征为本地轻表，API 直读轻表，避免每次扫描大表与成本抖动。
+  - 任务：
+    - Alembic 010 迁移：新建 `onchain_features` 表；`signals` 表新增 `onchain_asof_ts`、`onchain_confidence`
+    - 作业：`api/jobs/onchain/enrich_features.py`，三窗口派生与幂等写入（带 growth_ratio 计算）
+    - 验证脚本：`api/scripts/verify_onchain_features.py`，stub 模式验证 30/60/180 三窗口、growth_ratio 计算、幂等性
+    - API：`GET /onchain/features?chain=…&address=…` 返回三窗口最新记录，带 `stale`、`calc_version`、`degrade`、`cache`
+    - 文档：`docs/SCHEMA.md`、`docs/RUN_NOTES.md` 增补 Day12 表定义与验收流程
+  - 落地文件：
+    - `api/alembic/versions/010_day12_onchain_features.py`
+    - `api/jobs/onchain/enrich_features.py`
+    - `api/scripts/verify_onchain_features.py`
+    - `api/routes/onchain.py`
+    - `api/schemas/onchain.py`
+    - `api/__init__.py`
+    - `docs/SCHEMA.md`
+    - `docs/RUN_NOTES.md`
+  - 验收通过：
+    - 010 迁移可正常 upgrade/downgrade 往返
+    - `onchain_features` 表具备唯一约束、窗口白名单 check、查询索引
+    - `signals` 表存在 `onchain_asof_ts`、`onchain_confidence`
+    - enrich 作业能写入 30/60/180 窗口，重跑不新增重复行（幂等性正确）
+    - 有前值时 growth_ratio 计算正确，无前值为 NULL
+    - API 能返回三窗口最新记录，字段齐全（含 data_as_of、calc_version、stale、degrade、cache）
+    - 上游失败时回退 DB 最近值并标记 stale=true
+    - Run Notes 验证命令执行成功，含迁移、作业、API 测试全链路
+  - Notes：
+    - Pydantic 序列化方法改为兼容 v1/v2，避免 `.json()` 报错导致 stale 误判
+    - 部分 Session 工厂、DB 连接复用问题留作后续工程化清理卡
+
 ---
 
-## Today — Day9.2 Primary 卡门禁 + 文案模板改造
+## Today (DayN) {LOCKED}
 
-- **目标**：确保所有一级卡必须过 GoPlus，卡片文案全部改为“候选/假设 + 验证路径”，降低误导风险
-- **任务**：
-  - Primary 卡流程：候选（来源+疑似官方/非官方）→ GoPlus 体检 → 红黄绿风险标记
-  - 扩展 `rules/risk_rules.yml`：强制体检不通过即 red/yellow；体检异常时标记 gray + 降级提示
-  - 卡片渲染模板改造：新增 `risk_note` 字段，统一提示（高税/LP 未锁等），固定包含 `legal_note`
-  - Secondary 卡文案：来源分级（rumor/confirmed），必须显示验证路径与 `data_as_of`
-  - 新增 `normalize_ca(chain, ca)` 辅助方法，CA 归一化、多 CA 去重并标记 `is_official_guess`
-  - 推送防抖：同一 event_key 1 小时不重复，且仅状态变化（candidate→verified/downgraded/withdrawn）允许二次推送
-  - 降级一致性：GoPlus/DEX 出错时风险标 gray，并写入 `rules_fired`、`risk_source`
-- **落地文件**：
-  - `rules/risk_rules.yml`
-  - `api/security/goplus.py`
-  - `api/cards/generator.py`, `api/cards/dedup.py`
-  - `templates/cards/primary_card.tg.j2`, `templates/cards/primary_card.ui.j2`
-  - `templates/cards/secondary_card.tg.j2`, `templates/cards/secondary_card.ui.j2`
-  - `api/utils/ca.py`（新）
-  - `schemas/pushcard.schema.json`
-
-## Acceptance
-
-- **验收**：
-  - 3 个垃圾盘样本能被体检标红并推送 red 卡片
-  - GoPlus 不可用时卡片风险为 gray，且禁止出现 green
-  - Secondary 卡固定包含 `verify_path`、`data_as_of`、`source_level`，并预留 `features_snapshot`
-  - 模板文案统一为“候选/假设 + 验证路径”，含 `legal_note` 与隐藏字段 `rules_fired`
-  - 同一 event_key 仅“状态变化”允许二次推送
-  - `risk_source:"GoPlus@vX.Y"` 必填
-  - `normalize_ca` 生效，多 CA 去重并标注 `is_official_guess`
-
----
+### Acceptance

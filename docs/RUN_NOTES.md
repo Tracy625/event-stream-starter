@@ -618,3 +618,52 @@ docker compose -f infra/docker-compose.yml logs api | egrep '"stage":"bq\\.(dry_
 - 备注
   “exec -e FRESHNESS_SLO=1 curl …” 这种写法不会影响已启动的 API 进程，请使用修改 infra/.env + 强制重建容器的方式让配置生效。
   缓存检查顺序在成本护栏之后；因此即使存在缓存，超标的请求也会被 cost_guard 拦截。
+
+================================================================
+
+## Day12 — On-chain Features Light Table (2025-09-07)
+
+### Migration
+
+```bash
+# Apply migration 010
+docker compose -f infra/docker-compose.yml exec -T api alembic upgrade 010
+
+# Verify migration 010 metadata
+docker compose -f infra/docker-compose.yml exec -T api alembic show 010
+
+# Roundtrip check (optional)
+docker compose -f infra/docker-compose.yml exec -T api alembic downgrade -1
+docker compose -f infra/docker-compose.yml exec -T api alembic upgrade head
+```
+
+### Seed and Verify
+
+```bash
+# Run Day12 verifier with stub data (writes onchain_features rows)
+docker compose -f infra/docker-compose.yml exec -T api \
+  env ENABLE_STUB_DATA=true python -m api.scripts.verify_onchain_features
+
+# Inspect onchain_features distribution by window
+docker compose -f infra/docker-compose.yml exec -T db \
+  psql -U app -d app -c \
+  "SELECT window_minutes, COUNT(*) AS cnt, MAX(growth_ratio) AS latest_growth
+     FROM onchain_features
+    WHERE chain='eth' AND address='0x0000000000000000000000000000000000000000'
+    GROUP BY window_minutes ORDER BY window_minutes;"
+```
+
+### API Testing
+
+```bash
+# Query features endpoint (first call - cache miss)
+curl -s "http://localhost:8000/onchain/features?chain=eth&address=0x0000000000000000000000000000000000000000" | jq .
+
+# Query again (should hit cache, cache=true)
+curl -s "http://localhost:8000/onchain/features?chain=eth&address=0x0000000000000000000000000000000000000000" | jq .cache
+
+# Expected:
+# - windows["30"], windows["60"], windows["180"] present (if data exists)
+# - growth_ratio non-null for the second timestamp entries
+# - stale=false if DB has recent rows; cache=true on second identical query
+```

@@ -1,7 +1,7 @@
 Database Schema Specification
 
 TL;DR
-• Current Alembic Version: 009
+• Current Alembic Version: 010
 • Recent Changes:
 • 2025-08-26 (Day7): signals 扩展 goplus 字段（goplus_cache 表见 Rev 005）
 • 2025-08-31 (Day8): 新增 configs/x_kol.yaml 与验收脚本 verify_x_kol.py；raw_posts 使用 metadata JSON 扩展存储 tweet_id 等字段，无数据库迁移
@@ -13,7 +13,7 @@ TL;DR
 • 2025-09-05 (Day9.2): signals 新增字段 source_level 与 features_snapshot，完善 goplus_risk 枚举
 • 2025-09-06 (Day10): 接入 BigQuery Provider 与健康检查（不涉及数据库迁移）
 
-Revision: 009（down_revision='008'）
+Revision: 010（down_revision='009'）
 升级命令: alembic upgrade head
 容器环境示例: docker compose -f infra/docker-compose.yml exec -T api alembic upgrade head
 回滚建议: 业务侧可通过 REFINE_BACKEND=rules 立即降级；数据库列为增量，通常不需要回滚。如需清理：alembic downgrade 007。
@@ -190,6 +190,7 @@ Indexes
 Alembic Migration History
 
 Revision Date Content
+010 2025-09-06 onchain_features 表与 signals 新增列 (Day12)
 009 2025-09-07 signals 新增字段 heat_slope (Day11)
 009 2025-09-07 signals 新增字段 heat_slope (Day11)
 008 2025-09-05 signals 新增字段 source_level 与 features_snapshot，更新 goplus_risk 枚举（Day9.2）
@@ -276,6 +277,40 @@ ca_norm 字段说明（Day9.2 更新）：
 ⸻
 
 一致性提示（Day10）
-• 当前 Alembic 版本：009（head）
+• 当前 Alembic 版本：010（head）
 • Day10 未涉及数据库迁移；仅服务侧接入 BigQuery
 • Day9.2 已合并（008），已在库中生效
+
+## Day12: On-chain Features Light Table
+
+### Table: onchain_features
+
+```sql
+CREATE TABLE onchain_features (
+  id BIGSERIAL PRIMARY KEY,
+  chain TEXT NOT NULL,
+  address TEXT NOT NULL,
+  as_of_ts TIMESTAMPTZ NOT NULL,
+  window_minutes INT NOT NULL CHECK (window_minutes IN (30, 60, 180)),
+  addr_active INT,
+  tx_count INT,
+  growth_ratio NUMERIC,
+  top10_share NUMERIC,
+  self_loop_ratio NUMERIC,
+  calc_version INT NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (chain, address, as_of_ts, window_minutes)
+);
+
+CREATE INDEX idx_onf_lookup ON onchain_features (chain, address, window_minutes, as_of_ts);
+```
+
+### Columns added to signals table
+
+```sql
+ALTER TABLE signals ADD COLUMN onchain_asof_ts TIMESTAMPTZ;
+ALTER TABLE signals ADD COLUMN onchain_confidence INT;
+```
+
+- growth_ratio: Computed as (current.addr_active - previous.addr_active) / previous.addr_active for same (chain,address,window_minutes)
+- calc_version: Ensures idempotent updates (only update if new version &gt;= existing)
