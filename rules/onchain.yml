@@ -1,0 +1,23 @@
+# On-chain rules DSL configuration
+# Only the following keys are allowed: windows, thresholds, verdict
+windows: [30, 60, 180]
+thresholds:
+  active_addr_pctl:
+    high: 0.95
+    mid: 0.80
+  growth_ratio:
+    fast: 2.0
+    slow: 1.2
+  top10_share:
+    high_risk: 0.70
+    mid_risk: 0.40
+  self_loop_ratio:
+    suspicious: 0.20
+    watch: 0.10
+verdict:
+  upgrade_if:
+    - "active_addr_pctl>=high"
+    - "growth_ratio>=fast"
+  downgrade_if:
+    - "top10_share>=high_risk"
+    - "self_loop_ratio>=suspicious"

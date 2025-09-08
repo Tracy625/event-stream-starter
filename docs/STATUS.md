@@ -278,6 +278,7 @@
 - Day12: On-chain Features Light Table (done)
 
 - 目标：固化 BigQuery 上游的窗口化链上特征为本地轻表，API 直读轻表，避免每次扫描大表与成本抖动。
+
   - 任务：
     - Alembic 010 迁移：新建 `onchain_features` 表；`signals` 表新增 `onchain_asof_ts`、`onchain_confidence`
     - 作业：`api/jobs/onchain/enrich_features.py`，三窗口派生与幂等写入（带 growth_ratio 计算）
@@ -306,8 +307,37 @@
     - Pydantic 序列化方法改为兼容 v1/v2，避免 `.json()` 报错导致 stale 误判
     - 部分 Session 工厂、DB 连接复用问题留作后续工程化清理卡
 
----
+- Day13&14: Onchain 证据接入 + 专家视图 (done)
 
-## Today (DayN) {LOCKED}
-
-### Acceptance
+  - 目标：把 BigQuery/轻表 onchain 特征接入信号状态机（S0→S2），并提供受控的专家视图入口，限流/缓存/打点完善，可降级关闭。
+  - 任务落地（Cards A–E）：
+    - **Card A：规则 DSL 与评估引擎（稳定版）**
+      - `rules/onchain.yml` 最小 DSL；阈值分位与窗口白名单
+      - `api/onchain/dto.py` 定义 `OnchainFeature`、`Verdict`
+      - `api/onchain/rules_engine.py` `load_rules/evaluate`，四类 verdict（upgrade/downgrade/hold/insufficient）
+      - 边界用例与健壮性测试通过：YAML 严格键校验、边界值比较、窗口越界与异常兜底
+    - **Card B：候选验证作业 + 迁移**
+      - 迁移：`signals` 表新增 `onchain_asof_ts TIMESTAMPTZ`、`onchain_confidence NUMERIC(4,3)`；`state` 列与检查约束；并发安全索引
+      - 作业：`worker/jobs/onchain/verify_signal.py`，扫描 `state='candidate'`，延迟验证，超时标注 `evidence_delayed`
+      - 幂等与并发安全：Redis 锁 + 事件 TTL；BQ 计费统计 `bq_query_count/bq_scanned_mb`
+      - 运行时开关：`ONCHAIN_RULES=off` 时仅写 asof_ts/confidence，不改 state
+      - 测试：并发锁、降级优先级、超时与成本打点均覆盖
+    - **Card C：/signals/{event_key} 摘要 API**
+      - 返回 `state`、`onchain` 摘要与 `verdict`；Redis 缓存 120s，TTL 实时返回
+      - UTC `asof_ts` 以 `Z` 结尾；小数统一 3 位四舍五入；缓存/错误降级路径稳定
+    - **Card D：专家视图 `/expert/onchain`**
+      - 仅内部可见：`EXPERT_VIEW=on` + `X-Expert-Key` 必须
+      - 限流：`5/min/key`；缓存：180s± 抖动；打点：查询次数与字节
+      - 数据源：默认 PG 轻表；可选 BQ（`EXPERT_SOURCE=bq`），BQ 失败回退上次成功值并标记 `stale:true`
+      - 返回 24h/7d 活跃度序列与 top10_share 概览，字段对齐卡片 schema
+    - **Card E：集成与命令行**
+      - 周期任务：每分钟可调度 `verify_signal.run_once()`（开发环境可用 Make/cron 代替常驻 beat）
+      - Make：`onchain-verify-once`、`expert-dryrun`；日志结构化 JSON（scanned/evaluated/updated）
+  - 验收通过：
+    - 候选在 3–8 分钟内可升级为 verified/downgraded，或保持 candidate 并标注 `insufficient_evidence/evidence_delayed`
+    - `/signals/{event_key}` 命中缓存时返回 `cache.hit=true` 且 TTL 递减可见；数值精度正确
+    - 专家视图限流/缓存/降级生效；`EXPERT_VIEW=off` 时 404；BQ 离线时返回 `stale:true` 且不崩溃
+    - 运行时开关与回退路径符合 ADR：`ONCHAIN_RULES=off` 不改 state；迁移可降级
+  - Notes：
+    - 开发环境未常驻 beat 服务不影响演示：命令行触发与 cron 足够；生产如需常驻，单独部署 celery beat
+    - BigQuery 轻表为节费与稳定性引入，默认读 PG；BQ 配置缺失时自动降级不阻断

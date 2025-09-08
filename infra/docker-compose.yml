@@ -39,12 +39,20 @@ services:
       - ../configs:/app/configs:ro
       - ../schemas:/app/schemas:ro
       - ../templates:/app/templates:ro
+      - ./secrets:/app/infra/secrets:ro
     env_file: ./.env
     environment:
       PYTHONPATH: /app
       POSTGRES_URL: postgresql://app:app@db:5432/app
       REDIS_URL: redis://redis:6379/0
       SECURITY_BACKEND: goplus
+      
+      # Expert endpoint settings
+      EXPERT_VIEW: "on"
+      EXPERT_KEY: "devkey"
+      EXPERT_SOURCE: "pg"
+      EXPERT_RATE_LIMIT_PER_MIN: "5"
+      EXPERT_CACHE_TTL_SEC: "180"
       
       TELEGRAM_MODE: "mock"
       TELEGRAM_MOCK_PATH: "/tmp/telegram_sandbox.jsonl"
@@ -71,6 +79,7 @@ services:
     working_dir: /app
     volumes:
       - ..:/app
+      - ./secrets:/app/infra/secrets:ro
     env_file: ./.env
     environment:
       POSTGRES_URL: postgresql+psycopg2://app:app@db:5432/app
@@ -79,7 +88,7 @@ services:
       CELERY_RESULT_BACKEND: ${REDIS_URL}
       PYTHONPATH: /app:/app/worker/src
     restart: always
-    command: sh -lc "celery -A worker.app worker -l info --pool=solo"
+    command: sh -lc "celery -A worker.app worker --beat -l info --pool=solo"
     depends_on:
       db:
         condition: service_healthy

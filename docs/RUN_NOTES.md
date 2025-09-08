@@ -621,6 +621,127 @@ docker compose -f infra/docker-compose.yml logs api | egrep '"stage":"bq\\.(dry_
 
 ================================================================
 
+## Day E — Celery Beat Integration & Command-line Triggers (Card E)
+
+### Implementation Points
+
+- Celery Beat periodic task: `onchain_verify_periodic` runs every 60 seconds
+- Makefile targets: `onchain-verify-once` and `expert-dryrun` for manual triggers
+- Structured JSON logging for task execution results
+- Support for EVENT_KEY parameter in verify command
+- Support for ADDRESS and WINDOW parameters in expert dryrun
+
+### Running Acceptance
+
+- Start services with Celery Beat scheduler
+
+  ```bash
+  make up
+  # Check Celery logs for periodic task execution
+  docker compose -f infra/docker-compose.yml logs -f worker | grep onchain_verify_periodic
+  ```
+
+- Manual onchain verification (all candidates)
+
+  ```bash
+  make onchain-verify-once
+  # Expected output: {"scanned": N, "evaluated": M, "updated": K}
+  ```
+
+- Manual onchain verification (specific event)
+
+  ```bash
+  make onchain-verify-once EVENT_KEY=demo_cardc
+  # Expected output: {"scanned": 1, "evaluated": 1, "updated": 0 or 1}
+  ```
+
+- Expert view dryrun (24h window by default)
+
+  ```bash
+  make expert-dryrun ADDRESS=0xdAC17F958D2ee523a2206206994597C13D831ec7
+  # Expected output: JSON with onchain features for the address
+  ```
+
+- Expert view dryrun (custom window)
+
+  ```bash
+  make expert-dryrun ADDRESS=0xdAC17F958D2ee523a2206206994597C13D831ec7 WINDOW=1h
+  # Expected output: JSON with 1-hour window features
+  ```
+
+- Expert view with disabled EXPERT_VIEW (should fail gracefully)
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api sh -c 'curl -s http://localhost:8000/expert/onchain?chain=eth&address=0x123' | jq
+  # Expected: {"detail": "Expert view disabled"} or similar error
+  ```
+
+### Verification Commands
+
+- Check Celery Beat is running
+
+  ```bash
+  docker compose -f infra/docker-compose.yml ps | grep worker
+  # Should show worker container running
+  ```
+
+- View periodic task logs (JSON format)
+
+  ```bash
+  docker compose -f infra/docker-compose.yml logs worker | grep '"stage":"onchain_verify_periodic"' | tail -5
+  # Should see periodic execution with scanned/evaluated/updated counts
+  ```
+
+- Test cache hit for expert view
+
+  ```bash
+  # First call - cache miss
+  make expert-dryrun ADDRESS=0xdAC17F958D2ee523a2206206994597C13D831ec7 | jq .cache_hit
+  # Second call - cache hit (within TTL)
+  make expert-dryrun ADDRESS=0xdAC17F958D2ee523a2206206994597C13D831ec7 | jq .cache_hit
+  ```
+
+### Sample Expected Output
+
+- onchain-verify-once output:
+
+  ```json
+  {
+    "scanned": 3,
+    "evaluated": 2,
+    "updated": 1,
+    "duration_ms": 245
+  }
+  ```
+
+- expert-dryrun output:
+  ```json
+  {
+    "chain": "eth",
+    "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "windows": {
+      "30": [
+        {
+          "as_of_ts": "2025-09-08T10:00:00Z",
+          "addr_active": 150,
+          "growth_ratio": 1.2
+        }
+      ],
+      "60": [
+        {
+          "as_of_ts": "2025-09-08T10:00:00Z",
+          "addr_active": 300,
+          "growth_ratio": 1.5
+        }
+      ]
+    },
+    "cache_hit": false,
+    "stale": false
+  }
+  ```
+
+================================================================
+
 ## Day12 — On-chain Features Light Table (2025-09-07)
 
 ### Migration
@@ -655,7 +776,7 @@ docker compose -f infra/docker-compose.yml exec -T db \
 
 ### API Testing
 
-```bash
+````bash
 # Query features endpoint (first call - cache miss)
 curl -s "http://localhost:8000/onchain/features?chain=eth&address=0x0000000000000000000000000000000000000000" | jq .
 
@@ -666,4 +787,168 @@ curl -s "http://localhost:8000/onchain/features?chain=eth&address=0x000000000000
 # - windows["30"], windows["60"], windows["180"] present (if data exists)
 # - growth_ratio non-null for the second timestamp entries
 # - stale=false if DB has recent rows; cache=true on second identical query
+
+================================================================
+
+## Day13&amp;14 — Onchain 证据接入 &amp; 专家视图 (2025-09-08)
+
+### CARD A — 规则 DSL 与评估引擎（快速验收）
+
+- 运行单测（规则引擎）
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api \
+    pytest -q tests/test_rules_engine.py
+````
+
+- 人工抽检（边界与兜底）
+
+  ```bash
+  # 确认 YAML 严格性、边界与异常兜底（如项目保留了 edgecases 测试）
+  docker compose -f infra/docker-compose.yml exec -T api \
+    pytest -q tests/test_rules_engine_edgecases.py || true
+  ```
+
+- 最小内联验证（非必需）
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.onchain.rules_engine import load_rules, evaluate
+  from api.onchain.dto import OnchainFeature
+  from datetime import datetime, timezone
+  r = load_rules('rules/onchain.yml')
+  f = OnchainFeature(active_addr_pctl=0.96, growth_ratio=2.5,
+                     top10_share=0.30, self_loop_ratio=0.05,
+                     asof_ts=datetime.now(timezone.utc), window_min=60)
+  print(evaluate(f, r).model_dump())
+  PY
+  ```
+
+---
+
+### CARD B — 候选验证作业与迁移（幂等/降级可用）
+
+- 应用迁移（到 head）
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api \
+    alembic -c /app/api/alembic.ini upgrade head
+  ```
+
+- 检查 signals 必要列与索引
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T db \
+    psql -U app -d app -c "\d+ signals"
+  ```
+
+- 造一条候选（需先有 events 外键）
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "
+  INSERT INTO events (event_key, start_ts, last_ts, summary, type)
+  VALUES ('DEMO_B', NOW(), NOW(), 'stub summary', 'stub') ON CONFLICT DO NOTHING;
+  INSERT INTO signals (event_key, state, ts)
+  VALUES ('DEMO_B','candidate', NOW()) ON CONFLICT DO NOTHING;
+  "
+  ```
+
+- 跑一次作业
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T worker bash -lc '
+    export PYTHONPATH=/app
+    python - <<PY
+  from worker.jobs.onchain.verify_signal import run_once
+  print(run_once())
+  PY
+  '
+  ```
+
+- 验证写入效果
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T db \
+    psql -U app -d app -c "
+    SELECT event_key, state, onchain_asof_ts, onchain_confidence
+      FROM signals WHERE event_key='DEMO_B';
+    "
+  ```
+
+> 注：`ONCHAIN_RULES=off` 时仅写 `onchain_asof_ts/onchain_confidence`，不改 `state`。
+
+---
+
+### CARD C — `/signals/{event_key}` 摘要接口
+
+- 未命中缓存
+
+  ```bash
+  curl -s "http://localhost:8000/signals/DEMO_B" | jq .
+  ```
+
+- 二次命中缓存（TTL 下降）
+
+  ```bash
+  curl -s "http://localhost:8000/signals/DEMO_B" | jq '.cache'
+  ```
+
+- 404 场景（不存在的 key）
+  ```bash
+  curl -s -i "http://localhost:8000/signals/NO_SUCH_KEY" | head -1
+  ```
+
+---
+
+### CARD D — 专家视图（限流/缓存/打点）
+
+- 正常调用（需在 `infra/.env` 打开 `EXPERT_VIEW=on` 并设置 `EXPERT_KEY`）
+
+  ```bash
+  curl -s -H "X-Expert-Key: ${EXPERT_KEY:-dev_expert_key}" \
+    "http://localhost:8000/expert/onchain?chain=eth&amp;address=0xdAC17F958D2ee523a2206206994597C13D831ec7" | jq .
+  ```
+
+- 登录失败（缺少/错误密钥 → 403）
+
+  ```bash
+  curl -s -i "http://localhost:8000/expert/onchain?chain=eth&amp;address=0x123" | head -1
+  ```
+
+- 限流验证（1 分钟内超过阈值 → 429）
+
+  ```bash
+  for i in 1 2 3 4 5 6; do
+    curl -s -o /dev/null -w "%{http_code}\n" \
+      -H "X-Expert-Key: ${EXPERT_KEY:-dev_expert_key}" \
+      "http://localhost:8000/expert/onchain?chain=eth&amp;address=0xdAC17F958D2ee523a2206206994597C13D831ec7";
+  done
+  ```
+
+- 缓存命中（第二次应 `cache.hit=true` 或 TTL 下降）
+  ```bash
+  curl -s -H "X-Expert-Key: ${EXPERT_KEY:-dev_expert_key}" \
+    "http://localhost:8000/expert/onchain?chain=eth&amp;address=0xdAC17F958D2ee523a2206206994597C13D831ec7" | jq '.cache // .cache_hit'
+  ```
+
+> BQ 源可选：设置 `EXPERT_SOURCE=bq` 且配置 `BQ_ONCHAIN_FEATURES_VIEW`。没有凭证时会优雅降级，返回 `stale/empty`。
+
+---
+
+### CARD E — 集成与命令行触发（补充）
+
+> 已有「Day E」章节记录了详细命令。这里补充两条常用快捷方式：
+
+- 一键验证所有候选
+
+  ```bash
+  make onchain-verify-once
+  ```
+
+- 专家视图干跑（24h 窗口，地址必填）
+  ```bash
+  make expert-dryrun ADDRESS=0xdAC17F958D2ee523a2206206994597C13D831ec7
+  ```
+
+================================================================
+
+```
+
 ```

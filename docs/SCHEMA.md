@@ -1,7 +1,7 @@
 Database Schema Specification
 
 TL;DR
-• Current Alembic Version: 010
+• Current Alembic Version: 012
 • Recent Changes:
 • 2025-08-26 (Day7): signals 扩展 goplus 字段（goplus_cache 表见 Rev 005）
 • 2025-08-31 (Day8): 新增 configs/x_kol.yaml 与验收脚本 verify_x_kol.py；raw_posts 使用 metadata JSON 扩展存储 tweet_id 等字段，无数据库迁移
@@ -9,14 +9,16 @@ TL;DR
 • 2025-08-23 (Day5): events 表幂等迁移，新增 10 列 + 2 索引（保留旧列）
 • 2025-08-22 (Day4): 接入 HuggingFace 情感分析与关键词抽取，更新相关 ENV
 • 2025-08-21 (Day3+): 增加 metrics/cache/bench，补充结构化日志与延迟预算
-• 2025-09-04 (Day9): signals 扩展 topic 字段（话题卡最小链路）
+• 2025-09-06 (Day12/Rev 010): 创建 onchain_features（轻量表：as_of_ts/window_minutes/...）；为 signals 增加 onchain_asof_ts、onchain_confidence
+• 2025-09-07 (Rev 011): 调整 signals.onchain_confidence 为 NUMERIC(4,3)
+• 2025-09-08 (Rev 012): signals 新增 state（candidate|verified|downgraded）与索引 idx_signals_state_onlystate
 • 2025-09-05 (Day9.2): signals 新增字段 source_level 与 features_snapshot，完善 goplus_risk 枚举
 • 2025-09-06 (Day10): 接入 BigQuery Provider 与健康检查（不涉及数据库迁移）
 
-Revision: 010（down_revision='009'）
+Revision: 012（down*revision='011'）
 升级命令: alembic upgrade head
 容器环境示例: docker compose -f infra/docker-compose.yml exec -T api alembic upgrade head
-回滚建议: 业务侧可通过 REFINE_BACKEND=rules 立即降级；数据库列为增量，通常不需要回滚。如需清理：alembic downgrade 007。
+回滚建议: 业务侧可通过开关降级（ONCHAIN_RULES=off、EXPERT_VIEW=off）；数据库列均为增量且幂等。若需回滚 schema：可退回 011（移除 state），或退回 010（仍保留 onchain_features 与 onchain*\* 列）；更早版本请按迁移链逐步降级。
 
 ⸻
 
@@ -124,7 +126,7 @@ signals
     • event_key TEXT REFERENCES events(event_key) (Day1)
     • market_type TEXT (Day1)
     • advice_tag TEXT (Day1)
-    • confidence DOUBLE PRECISION (Day1, 修正：原为 INTEGER，改为浮点数以支持小数置信度)
+    • confidence INTEGER (Day1) — 当前库中为 INTEGER；链上评估置信度请使用 onchain_confidence
     • goplus_risk TEXT CHECK (goplus_risk IN ('red','yellow','green','unknown','gray')) (Day7, Day9.2 更新)
     • buy_tax DOUBLE PRECISION (Day7)
     • sell_tax DOUBLE PRECISION (Day7)
@@ -141,6 +143,10 @@ signals
     • topic_slope_30m DOUBLE PRECISION (Day9)
     • topic_mention_count INTEGER (Day9)
     • topic_confidence DOUBLE PRECISION (Day9)
+    • state TEXT NOT NULL DEFAULT 'candidate' CHECK (state IN ('candidate','verified','downgraded')) (Day12)
+    • onchain_asof_ts TIMESTAMPTZ (Day12) — 链上特征评估的 as_of 时间
+    • onchain_confidence NUMERIC(4,3) (Day12) — 规则评估置信度，三位小数
+      • API 映射：Card C/D 返回字段 `onchain.asof_ts`（UTC, 'Z' 结尾）来源于库列 `onchain_features.as_of_ts`；`window_min` 来源于 `window_minutes`（仅显示 30/60/180）。
     • topic_sources TEXT[] (Day9)
     • topic_evidence_links JSONB DEFAULT '[]'::jsonb (Day9)
     • topic_merge_mode TEXT (Day9)
@@ -160,6 +166,7 @@ stale: BOOLEAN (optional)
 
 Indexes
 • CREATE INDEX ON signals (event_key, ts DESC); (Day1)
+• idx_signals_state_onlystate btree (state) (Day12)
 
 ⸻
 
@@ -190,10 +197,11 @@ Indexes
 Alembic Migration History
 
 Revision Date Content
-010 2025-09-06 onchain_features 表与 signals 新增列 (Day12)
+012 2025-09-08 add_signals_state（新增 state 列与相关索引）
+011 2025-09-07 fix_onchain_confidence_type（signals.onchain_confidence 调整为 NUMERIC(4,3)）
+010 2025-09-06 day12_onchain_features（创建 onchain_features 表；并为 signals 增加 onchain_asof_ts 与 onchain_confidence）
 009 2025-09-07 signals 新增字段 heat_slope (Day11)
-009 2025-09-07 signals 新增字段 heat_slope (Day11)
-008 2025-09-05 signals 新增字段 source_level 与 features_snapshot，更新 goplus_risk 枚举（Day9.2）
+008 2025-08-05 signals 新增字段 source_level 与 features_snapshot，更新 goplus_risk 枚举（Day9.2）
 007 2025-09-04 signals 扩展 topic 字段 (Meme 话题卡最小链路)
 006 2025-08-26 signals 扩展 goplus\__ 字段 (risk/tax/lp_lock_days/honeypot)
 005 2025-08-25 Add goplus_cache table (迁移)
@@ -251,6 +259,20 @@ alembic upgrade head
 
 alembic downgrade 007
 
+5. Day12/012 校验
+
+docker compose -f infra/docker-compose.yml exec -T db \
+ psql -U app -d app -c '\d+ onchain_features'
+
+# 预期列：as_of_ts, window_minutes, growth_ratio, top10_share, self_loop_ratio
+
+docker compose -f infra/docker-compose.yml exec -T db \
+ psql -U app -d app -c '\d+ signals'
+
+# 预期列：state（且 CHECK 范围正确）、onchain_asof_ts、onchain_confidence NUMERIC(4,3)
+
+# 预期索引：idx_signals_state_onlystate
+
 ⸻
 
 变更影响与兼容性（Day6）
@@ -277,13 +299,15 @@ ca_norm 字段说明（Day9.2 更新）：
 ⸻
 
 一致性提示（Day10）
-• 当前 Alembic 版本：010（head）
+• 当前 Alembic 版本：012（head）
 • Day10 未涉及数据库迁移；仅服务侧接入 BigQuery
 • Day9.2 已合并（008），已在库中生效
 
-## Day12: On-chain Features Light Table
+一致性提示（Day12/012）
+• 采用 PG 轻量表 onchain_features；API 显示字段与库列名存在映射（asof_ts ⇄ as_of_ts，window_min ⇄ window_minutes）。
+• Card C 默认读 PG；Card D 支持 PG 默认源，BQ 可通过 `EXPERT_SOURCE=bq` 启用，失败时降级到 PG/缓存。
 
-### Table: onchain_features
+## Day12/012: On-chain Features Light（定稿）
 
 ```sql
 CREATE TABLE onchain_features (
@@ -309,8 +333,15 @@ CREATE INDEX idx_onf_lookup ON onchain_features (chain, address, window_minutes,
 
 ```sql
 ALTER TABLE signals ADD COLUMN onchain_asof_ts TIMESTAMPTZ;
-ALTER TABLE signals ADD COLUMN onchain_confidence INT;
+ALTER TABLE signals ADD COLUMN onchain_confidence NUMERIC(4,3);
 ```
+
+### API 字段映射与精度
+
+- 数据库列名：`as_of_ts`, `window_minutes`; API 返回：`asof_ts`, `window_min`（仅展示，不改库名）。
+- 数值字段统一三位小数（ROUND_HALF_UP）；时间统一 UTC ISO8601 且以 'Z' 结尾。
+- 仅 60 分钟窗口参与 S0→S2 判定；专家视图可提供 30/60/180 聚合。
 
 - growth_ratio: Computed as (current.addr_active - previous.addr_active) / previous.addr_active for same (chain,address,window_minutes)
 - calc_version: Ensures idempotent updates (only update if new version &gt;= existing)
+- 注：signals.confidence 仍为 INTEGER；链上评估置信度写入 onchain_confidence（NUMERIC(4,3)）。
