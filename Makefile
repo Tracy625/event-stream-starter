@@ -1,4 +1,4 @@
-.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment verify-refiner demo-refine
+.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment verify-refiner demo-refine onchain-verify-once expert-dryrun
 
 help:
 	@echo "Targets:"
@@ -131,3 +131,39 @@ push-topic-digest:
 seed-topic:
 	@if [ -z "$(topic)" ]; then echo "Usage: make seed-topic topic=t.XXXX"; exit 1; fi
 	docker compose -f infra/docker-compose.yml exec api bash -lc 'cd /app && python -m api.scripts.seed_topic_mentions $(topic)'
+
+# ----- Onchain Verification -----
+onchain-verify-once:
+	@echo "Running onchain signal verification once..."
+	@if [ -z "$(EVENT_KEY)" ]; then \
+		echo "Running verification for all candidate signals (limit=100)..."; \
+		docker compose -f infra/docker-compose.yml exec -T worker python -c \
+			"from worker.jobs.onchain.verify_signal import run_once; import json; result = run_once(limit=100); print(json.dumps(result))"; \
+	else \
+		echo "Running verification with limit=1 (EVENT_KEY filtering not supported)..."; \
+		docker compose -f infra/docker-compose.yml exec -T worker python -c \
+			"from worker.jobs.onchain.verify_signal import run_once; import json; result = run_once(limit=1); print(json.dumps(result))"; \
+	fi
+
+expert-dryrun:
+	@echo "Running expert view dryrun..."
+	@if [ -z "$(ADDRESS)" ]; then \
+		echo "Error: ADDRESS parameter required. Usage: make expert-dryrun ADDRESS=0x123..."; \
+		exit 1; \
+	fi
+	@WINDOW=$${WINDOW:-24h}; \
+	echo "Fetching expert view for ADDRESS=$(ADDRESS) WINDOW=$$WINDOW..."; \
+	if [ "$$WINDOW" = "24h" ]; then \
+		WINDOW_MINS=1440; \
+	elif [ "$$WINDOW" = "1h" ]; then \
+		WINDOW_MINS=60; \
+	elif [ "$$WINDOW" = "30m" ]; then \
+		WINDOW_MINS=30; \
+	else \
+		echo "Warning: Unknown WINDOW format, using 24h default"; \
+		WINDOW_MINS=1440; \
+	fi; \
+	docker compose -f infra/docker-compose.yml exec -T \
+		-e EXPERT_VIEW=on \
+		-e EXPERT_KEY=devkey \
+		api python -c "import requests, json; r = requests.get('http://localhost:8000/expert/onchain?chain=eth&address=$(ADDRESS)', headers={'X-Expert-Key': 'devkey'}); print(json.dumps(r.json() if r.status_code == 200 else {'error': f'HTTP {r.status_code}: {r.text}'}, indent=2))"

@@ -59,3 +59,6 @@ dump.rdb
 # Local env files
 .env.local
 .env.*.local
+
+#GCP-BigQuery (Day10)
+infra/secrets/*.json

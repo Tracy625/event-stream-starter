@@ -14,7 +14,10 @@ app.conf.update(
     enable_utc=True,
 )
 
-app.autodiscover_tasks(['worker.jobs'])
+app.autodiscover_tasks(['worker.jobs', 'worker'])
+
+# Import tasks to ensure beat schedule is registered
+from . import tasks
 
 if __name__ == "__main__":
     print("Celery app loaded:", app)
