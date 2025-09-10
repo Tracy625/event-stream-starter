@@ -3,11 +3,19 @@
 Smoke test for sentiment analysis backends.
 
 Tests both rules and HF backends on a fixed set of inputs.
-Prints results for manual verification.
+Supports batch processing from JSONL files.
 """
 
 import os
 import sys
+import json
+import time
+import signal
+import argparse
+from typing import List, Dict, Any
+
+# Handle broken pipe gracefully
+signal.signal(signal.SIGPIPE, signal.SIG_DFL) if hasattr(signal, 'SIGPIPE') else None
 
 
 TEST_INPUTS = [
@@ -44,19 +52,152 @@ def test_backend(backend: str):
             sys.exit(1)
 
 
+def load_jsonl(filepath: str) -> List[Dict[str, Any]]:
+    """Load JSONL file and extract texts."""
+    texts = []
+    with open(filepath, 'r') as f:
+        for line in f:
+            if line.strip():
+                data = json.loads(line)
+                if 'text' in data:
+                    texts.append(data['text'])
+    return texts
+
+
+def process_batch_hf(texts: List[str]) -> List[Dict[str, Any]]:
+    """Process batch using HfClient."""
+    from api.services.hf_client import HfClient
+    
+    client = HfClient()
+    return client.predict_sentiment_batch(texts)
+
+
+def process_batch_rules(texts: List[str]) -> List[Dict[str, Any]]:
+    """Process batch using rules backend."""
+    from api.filter import analyze_sentiment
+    
+    # Ensure rules backend is used
+    original_backend = os.environ.get("SENTIMENT_BACKEND", "rules")
+    os.environ["SENTIMENT_BACKEND"] = "rules"
+    
+    results = []
+    for text in texts:
+        try:
+            label, score = analyze_sentiment(text)
+            results.append({
+                "label": label,
+                "score": score,
+                "probs": None  # Rules backend doesn't provide probabilities
+            })
+        except Exception as e:
+            results.append({
+                "label": "neu",
+                "score": 0.0,
+                "error": str(e)
+            })
+    
+    # Restore original backend
+    os.environ["SENTIMENT_BACKEND"] = original_backend
+    return results
+
+
+def run_batch(batch_file: str, backend: str, summary_json: bool = False):
+    """Run batch processing with specified backend."""
+    if not summary_json:
+        print(f"\n=== Batch Processing: backend={backend} ===")
+    
+    # Load texts
+    texts = load_jsonl(batch_file)
+    if not texts:
+        if not summary_json:
+            print(f"No valid texts found in {batch_file}")
+        return
+    
+    if not summary_json:
+        print(f"Loaded {len(texts)} texts from {batch_file}")
+    
+    # Process batch
+    t0 = time.time()
+    
+    if backend == "hf":
+        results = process_batch_hf(texts)
+    elif backend == "rules":
+        results = process_batch_rules(texts)
+    else:
+        if not summary_json:
+            print(f"Unknown backend: {backend}")
+        return
+    
+    elapsed_ms = int((time.time() - t0) * 1000)
+    
+    # Calculate summary stats
+    success_count = sum(1 for r in results if 'error' not in r)
+    fail_count = len(results) - success_count
+    has_degrade = any('degrade' in r for r in results)
+    
+    if summary_json:
+        # Output only JSON summary
+        summary = {
+            "input_count": len(texts),
+            "success_count": success_count,
+            "fail_count": fail_count,
+            "elapsed_ms": elapsed_ms,
+            "degraded": has_degrade
+        }
+        try:
+            print(json.dumps(summary))
+            sys.stdout.flush()
+        except BrokenPipeError:
+            sys.exit(0)
+    else:
+        # Output results line by line
+        for result in results:
+            try:
+                print(json.dumps(result))
+            except BrokenPipeError:
+                sys.exit(0)
+        
+        # Print text summary
+        try:
+            print(f"\n=== Summary ===")
+            print(f"Input count: {len(texts)}")
+            print(f"Success count: {success_count}")
+            print(f"Fail count: {fail_count}")
+            print(f"Elapsed time: {elapsed_ms}ms")
+            print(f"Has degradation: {has_degrade}")
+            sys.stdout.flush()
+        except BrokenPipeError:
+            sys.exit(0)
+
+
 def main():
-    """Run smoke tests for all backends."""
-    print("Sentiment Analysis Smoke Test")
-    print("=" * 40)
+    """Run smoke tests for sentiment analysis."""
+    parser = argparse.ArgumentParser(description='Sentiment analysis smoke test')
+    parser.add_argument('--batch', type=str, help='JSONL file for batch processing')
+    parser.add_argument('--backend', type=str, choices=['hf', 'rules'], 
+                       default='hf', help='Backend to use (hf or rules)')
+    parser.add_argument('--summary-json', action='store_true',
+                       help='Output only JSON summary (for batch mode)')
     
-    # Test rules backend
-    test_backend("rules")
+    args = parser.parse_args()
     
-    # Test HF backend
-    test_backend("hf")
-    
-    print("\n" + "=" * 40)
-    print("Smoke test completed")
+    if args.batch:
+        # Batch mode
+        run_batch(args.batch, args.backend, args.summary_json)
+    else:
+        # Original smoke test mode
+        if not args.summary_json:
+            print("Sentiment Analysis Smoke Test")
+            print("=" * 40)
+            
+            # Test rules backend
+            test_backend("rules")
+            
+            # Test HF backend
+            test_backend("hf")
+            
+            print("\n" + "=" * 40)
+            print("Smoke test completed")
 
 
 if __name__ == "__main__":
