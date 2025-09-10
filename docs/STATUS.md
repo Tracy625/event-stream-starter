@@ -341,3 +341,81 @@
   - Notes：
     - 开发环境未常驻 beat 服务不影响演示：命令行触发与 cron 足够；生产如需常驻，单独部署 celery beat
     - BigQuery 轻表为节费与稳定性引入，默认读 PG；BQ 配置缺失时自动降级不阻断
+
+- Day15&16 合并执行 (Done)
+
+  **目标达成（不改 Day5 的 event_key 维度）**
+
+  - 事件跨源聚合与证据去重：仅以 `event_key` 合并，`events.evidence[]` 与 `evidence_count` 正确累积；去重键为 `sha1(source+stable_ref)`。
+  - 热度快照与斜率：新增 `GET /signals/heat?token|token_ca`，返回 `{cnt_10m,cnt_30m,slope,trend,asof_ts}`；样本不足降级为仅计数。
+  - 可选持久化：当 `HEAT_ENABLE_PERSIST=true` 时，按 **event_key** 将结果写入 `signals.features_snapshot.heat`（幂等、原地覆盖）。
+  - D.1 修复：`persist_heat()` 先解析 `event_key`（优先 `token_ca`，可回退 `symbol`），**直接用 event_key 更新**，无 JOIN；路由中 **compute + persist 同一事务**，杜绝“persisted:true 但 DB 空”。
+  - E 文档与可观测性：RUN_NOTES 补齐一键 smoke 流程、环境变量与回滚、结构化日志字段清单；Swagger 路由统一挂载于 `api/routes/*`。
+
+  **关键开关**
+
+  - `EVENT_KEY_SALT=v1`（改动仅打印告警，不改输入维度）
+  - `EVENT_MERGE_STRICT=true|false`（严格跨源/单源）
+  - `HEAT_ENABLE_PERSIST=true|false`（是否落盘）
+  - `HEAT_CACHE_TTL=0`（0 关闭缓存）
+  - `THETA_RISE`（趋势阈值），`HEAT_NOISE_FLOOR`、`HEAT_EMA_ALPHA`
+
+  **观测点（stage）**
+
+  - `pipeline.event.key`、`pipeline.event.merge`、`pipeline.event.evidence.merge`
+  - `signals.heat.compute`、`signals.heat.persist`、`signals.heat.error`
+
+  - **Verify 重放（严格/宽松对比）**
+
+    ```bash
+     严格：应出现跨源共现 (>0)
+    docker compose -f infra/docker-compose.yml exec -T api sh -lc 'PYTHONPATH=/app EVENT_MERGE_STRICT=true  python -m scripts.verify_events --sample scripts/replay.jsonl'
+
+     宽松：跨源共现应为 0
+    docker compose -f infra/docker-compose.yml exec -T api sh -lc 'PYTHONPATH=/app EVENT_MERGE_STRICT=false python -m scripts.verify_events --sample scripts/replay.jsonl'
+    ```
+
+    期望：每事件 `refs>=2` 且 `event_key` 重放一致；严格模式统计中出现 `x + dex|goplus` 共现。
+
+  - **Heat 接口 + 持久化（最小 smoke）**
+
+    ```bash
+     造数（落在 10m/30m 窗口内）
+    docker compose -f infra/docker-compose.yml exec -T db psql -U app <<'SQL'
+    BEGIN;
+    INSERT INTO events(event_key,type,summary,start_ts,last_ts,symbol,token_ca,version,evidence_count)
+    SELECT 'ek_test_1','topic','seed', NOW()-INTERVAL '30 min', NOW(), 'TEST','0xabc123abc123abc123abc123abc123abc123abcd','v1',2
+    WHERE NOT EXISTS (SELECT 1 FROM events WHERE event_key='ek_test_1');
+    INSERT INTO signals(event_key,features_snapshot,ts)
+    SELECT 'ek_test_1','{}'::jsonb,NOW()
+    WHERE NOT EXISTS (SELECT 1 FROM signals WHERE event_key='ek_test_1');
+    DELETE FROM raw_posts WHERE token_ca='0xabc123abc123abc123abc123abc123abc123abcd';
+    INSERT INTO raw_posts(symbol,token_ca,ts,source,text) VALUES
+    ('TEST','0xabc123abc123abc123abc123abc123abc123abcd', NOW()-INTERVAL '9 min','x','mock'),
+    ('TEST','0xabc123abc123abc123abc123abc123abc123abcd', NOW()-INTERVAL '8 min','x','mock'),
+    ('TEST','0xabc123abc123abc123abc123abc123abc123abcd', NOW()-INTERVAL '7 min','x','mock'),
+    ('TEST','0xabc123abc123abc123abc123abc123abc123abcd', NOW()-INTERVAL '6 min','x','mock'),
+    ('TEST','0xabc123abc123abc123abc123abc123abc123abcd', NOW()-INTERVAL '5 min','x','mock'),
+    ('TEST','0xabc123abc123abc123abc123abc123abc123abcd', NOW()-INTERVAL '3 min','x','mock'),
+    ('TEST','0xabc123abc123abc123abc123abc123abc123abcd', NOW()-INTERVAL '1 min','x','mock'),
+    ('TEST','0xabc123abc123abc123abc123abc123abc123abcd', NOW()-INTERVAL '19 min','x','mock'),
+    ('TEST','0xabc123abc123abc123abc123abc123abc123abcd', NOW()-INTERVAL '11 min','x','mock');
+    COMMIT;
+    SQL
+
+    开启持久化并调用（缓存关）
+    docker compose -f infra/docker-compose.yml exec -T api sh -lc 'HEAT_ENABLE_PERSIST=true HEAT_CACHE_TTL=0 curl -s "http://localhost:8000/signals/heat?token_ca=0xabc123abc123abc123abc123abc123abc123abcd" | jq .'
+
+     核对 DB 已落盘
+    docker compose -f infra/docker-compose.yml exec -T db psql -U app -c "SELECT jsonb_pretty(features_snapshot) FROM signals WHERE event_key='ek_test_1'"
+    ```
+
+    期望：接口返回 `cnt_10m=7,cnt_30m=9,slope≈0.5,trend=up,persisted=true`；数据库存在 `features_snapshot.heat`。
+
+  - **回滚校验**
+    - `HEAT_ENABLE_PERSIST=false` 再调接口，`persisted=false` 且不写库。
+    - `EVENT_MERGE_STRICT=false` 重跑 verify，共现计数为 0。
+
+## Today
+
+### Acceptance

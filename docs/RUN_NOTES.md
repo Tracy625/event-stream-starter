@@ -5,7 +5,7 @@
 
 ================================================================
 
-## Day0 — Environment & Infra Init
+## Day0 — Environment & Infra Init (2025-08-17)
 
 - 启动基础服务（db/redis/api）
   make up
@@ -16,7 +16,7 @@
 
 ---
 
-## Day1 — Monorepo Init / DB migrations
+## Day1 — Monorepo Init / DB migrations (2025-08-18)
 
 - 应用 Alembic 迁移（使用容器内 alembic.ini）
   docker compose -f infra/docker-compose.yml exec -T api alembic -c /app/api/alembic.ini upgrade head
@@ -25,7 +25,7 @@
 
 ---
 
-## Day2 — Filter / Refine / Dedup / DB pipeline
+## Day2 — Filter / Refine / Dedup / DB pipeline (2025-08-19)
 
 ⚠ variance: 原计划是「X API 采集 / 粗筛」，实际完成的是 pipeline/demo，采集推迟到 Day8。
 
@@ -36,7 +36,7 @@
 
 ---
 
-## Day3 — Demo ingest script & logging
+## Day3 — Demo ingest script & logging (2025-08-20)
 
 ⚠ variance: 原计划是「规则与关键词粗筛」，实际完成的是 demo ingest & logging；粗筛部分将在 Day8–Day9 补齐。
 
@@ -45,7 +45,7 @@
 
 ---
 
-## Day3+ — Metrics / Cache / Benchmarks
+## Day3+ — Metrics / Cache / Benchmarks (2025-08-21)
 
 - 运行基准测试
   make bench-sentiment
@@ -54,7 +54,7 @@
 
 ---
 
-## Day4 — HuggingFace Sentiment & Keyphrases
+## Day4 — HuggingFace Sentiment & Keyphrases (2025-08-22)
 
 - 测试 rules backend（默认）
   docker compose -f infra/docker-compose.yml exec -T api python -c "from api.filter import analyze_sentiment; print(analyze_sentiment('this is bad'))"
@@ -67,7 +67,7 @@
 
 ---
 
-## Day5 — Event Aggregation
+## Day5 — Event Aggregation (2025-08-23)
 
 - 运行 demo，触发事件聚合
   make demo
@@ -80,9 +80,158 @@
 
 ---
 
+## Day5+ — Event Key 不变性 & 合并护栏 (2025-08-24)
+
+- 打印当前盐与严格模式
+  docker compose -f infra/docker-compose.yml exec -T api sh -c 'echo "Salt: $EVENT_KEY_SALT, Strict: $EVENT_MERGE_STRICT"'
+
+- 本地调用 make_event_key() 的最小例子
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.events import make_event_key
+  from datetime import datetime, timezone
+  post = {
+      "type": "token_launch",
+      "symbol": "TEST",
+      "token_ca": "0x1234567890123456789012345678901234567890",
+      "text": "Check out this new token @user https://example.com",
+      "created_ts": datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+  }
+  key1 = make_event_key(post)
+  key2 = make_event_key(post)  # Should be identical
+  print(f"Key1: {key1}")
+  print(f"Key2: {key2}")
+  print(f"Keys match: {key1 == key2}")
+  print(f"Key length: {len(key1)} (should be 40)")
+  PY
+  ```
+
+- 测试 merge_event_by_key() dry-run
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.events import merge_event_by_key
+  result = merge_event_by_key(
+      "test_event_key_123",
+      {"source": "x", "evidence": [{"data": "test"}], "sources": ["twitter", "telegram"]},
+      strict=True
+  )
+  print(f"Would change: {result['would_change']}")
+  print(f"Delta count: {result['delta_count']}")
+  print(f"Sources (list): {result['sources_candidate']}")
+  print(f"Sources type: {type(result['sources_candidate'])}")
+  PY
+  ```
+
+- 测试 salt 变更警告（只打印一次）
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api sh -c 'EVENT_KEY_SALT=v2 python - <<PY
+  from api.events import make_event_key
+  from datetime import datetime, timezone
+  post = {"type": "test", "created_ts": datetime.now(timezone.utc)}
+  # First call - should log salt_changed
+  key1 = make_event_key(post)
+  # Second call - should NOT log again
+  key2 = make_event_key(post)
+  print(f"Generated {key1}, {key2}")
+  PY'
+  ```
+
+- 测试 token_ca 校验
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.events import make_event_key
+  from datetime import datetime, timezone
+  # Test missing 0x prefix warning
+  post1 = {"type": "test", "token_ca": "abc123", "created_ts": datetime.now(timezone.utc)}
+  key1 = make_event_key(post1)
+  # Test non-hex chars warning
+  post2 = {"type": "test", "token_ca": "0xGGGG", "created_ts": datetime.now(timezone.utc)}
+  key2 = make_event_key(post2)
+  print("Check logs for token_ca_warning events")
+  PY
+  ```
+
+- 注意：真正落库与 refs 校验请见后续 Card
+
 ---
 
-## Day6 — Refiner (LLM Integration)
+---
+
+## Day5++ — Cross-source Evidence Merge & Dedup (2025-08-25)
+
+- 验证证据合并（从宿主机运行）
+
+  ```bash
+  # 宿主机方式
+  PYTHONPATH=. python -m scripts.verify_events --sample scripts/replay.jsonl
+
+  # 容器方式（如果 scripts 目录已映射）
+  docker compose -f infra/docker-compose.yml exec -T api python -m scripts.verify_events --sample scripts/replay.jsonl
+  ```
+
+- 严格/宽松模式对比
+
+  ```bash
+  # Strict mode (default) - 期望 cross_source_cooccurrence > 0
+  EVENT_MERGE_STRICT=true PYTHONPATH=. python -m scripts.verify_events --sample scripts/replay.jsonl
+
+  # Loose mode - 期望 cross_source_cooccurrence = 0
+  EVENT_MERGE_STRICT=false PYTHONPATH=. python -m scripts.verify_events --sample scripts/replay.jsonl
+  ```
+
+- 新旧入口对比
+
+  ```bash
+  # 新入口：upsert_event_with_evidence
+  python -c "
+  from api.events import upsert_event_with_evidence, _build_evidence_item
+  from datetime import datetime, timezone
+
+  evidence = [
+      _build_evidence_item('x', datetime.now(timezone.utc), {'tweet_id': '123'}, 'test', 1.0),
+      _build_evidence_item('dex', datetime.now(timezone.utc), {'pool': '0xabc'}, 'price', 0.8)
+  ]
+
+  result = upsert_event_with_evidence(
+      event={'type': 'test', 'symbol': 'TEST', 'created_ts': datetime.now(timezone.utc)},
+      evidence=evidence,
+      current_source='x'  # Single source mode
+  )
+  print(f'Event key: {result[\"event_key\"][:8]}...')
+  print(f'Evidence count: {result[\"evidence_count\"]}')
+  "
+
+  # 旧入口：upsert_event (兼容性保留)
+  python -c "
+  from api.events import upsert_event
+  from datetime import datetime, timezone
+
+  result = upsert_event(
+      {'type': 'test', 'symbol': 'TEST', 'created_ts': datetime.now(timezone.utc)},
+      x_data={'tweet_id': '123', 'text': 'test'},
+      dex_data={'price_usd': 0.001}
+  )
+  print(f'Event key: {result[\"event_key\"][:8]}...')
+  "
+  ```
+
+- 查看 evidence 数组内容
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "
+    SELECT event_key, jsonb_array_length(evidence) as evidence_items,
+           evidence->0->>'source' as first_source
+    FROM events
+    WHERE evidence IS NOT NULL
+    LIMIT 5;"
+  ```
+
+---
+
+## Day6 — Refiner (LLM Integration) (2025-08-26)
 
 - 验证 LLM Refiner（rules / llm 两种 backend）
 
@@ -108,7 +257,7 @@
   docker compose -f infra/docker-compose.yml logs -f api | egrep "refine.request|refine.success|refine.error|refine.degrade|refine.warn"
   ```
 
-# Day7 — GoPlus Security Integration
+# Day7 — GoPlus Security Integration (2025-08-27)
 
 - 验证 risk_rules.yml 是否存在并包含样例黑名单地址
 
@@ -136,7 +285,7 @@
   ENABLE_GOPLUS_SCAN=true docker compose -f infra/docker-compose.yml up -d worker
   docker compose -f infra/docker-compose.yml logs worker | grep goplus.scan | tail -40
 
-## Day7.1
+## Day7.1 (2025-08-28)
 
 - 写入样例事件和信号（3 个垃圾盘地址）
   docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "
@@ -163,7 +312,7 @@
   FROM signals s JOIN events e USING(event_key)
   WHERE s.event_key IN ('TEST_BAD','TEST_DEAD','TEST_ZERO');"
 
-## Day8 — X KOL Collection
+## Day8 — X KOL Collection (2025-08-29)
 
 - 配置环境变量（使用 mock 模式）
 
@@ -949,6 +1098,457 @@ curl -s "http://localhost:8000/onchain/features?chain=eth&address=0x000000000000
 
 ================================================================
 
+## CardC & CardD — Heat Calculation Service with Persistence (2025-09-09)
+
+- 基本调用（使用 token 参数）
+
+  ```bash
+  curl -s "http://localhost:8000/signals/heat?token=USDT" | jq
+  ```
+
+- 使用 token_ca 参数
+
+  ```bash
+  curl -s "http://localhost:8000/signals/heat?token_ca=0xdac17f958d2ee523a2206206994597c13d831ec7" | jq
+  ```
+
+- 阈值对比测试
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export THETA_RISE=0.1
+    echo "=== THETA_RISE=0.1 ==="
+    curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{slope,trend}"
+    export THETA_RISE=0.5
+    echo "=== THETA_RISE=0.5 ==="
+    curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{slope,trend}"'
+  ```
+
+- 噪声地板测试
+
+  ```bash
+  # 设置较高的噪声地板
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export HEAT_NOISE_FLOOR=100
+    curl -s "http://localhost:8000/signals/heat?token=RARE" | jq "{cnt_10m,slope,trend,degrade}"'
+  ```
+
+- EMA 平滑测试
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export HEAT_EMA_ALPHA=0.3
+    echo "First call:"
+    curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{slope,slope_ema,trend,trend_ema}"
+    echo "Second call (EMA smoothed):"
+    curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{slope,slope_ema,trend,trend_ema}"'
+  ```
+
+- 缓存命中测试
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export HEAT_CACHE_TTL=30
+    echo "First call (cache miss):"
+    time curl -s "http://localhost:8000/signals/heat?token=USDT" | jq .from_cache
+    echo "Second call (cache hit):"
+    time curl -s "http://localhost:8000/signals/heat?token=USDT" | jq .from_cache'
+  ```
+
+- 落盘演示（幂等性）
+
+  ```bash
+  # 不落盘（默认）
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export HEAT_ENABLE_PERSIST=false
+    curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{persisted,asof_ts}"'
+
+  # 开启落盘（需要 signals 表中已存在对应行）
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export HEAT_ENABLE_PERSIST=true
+    curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{persisted,asof_ts}"'
+
+  # 查看数据库中的 heat 数据（包含 asof_ts）
+  docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "
+    SELECT event_key, symbol,
+           features_snapshot->'heat'->>'asof_ts' as asof_ts,
+           features_snapshot->'heat' as heat
+    FROM signals WHERE symbol='USDT' LIMIT 1;"
+  ```
+
+- strict_match 行为验证
+
+  ```bash
+  # 仅 symbol 存在而无 token_ca 时（strict_match=false 允许回退）
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export HEAT_ENABLE_PERSIST=true
+    export HEAT_PERSIST_STRICT_MATCH=false
+    curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{persisted,asof_ts}"'
+
+  # strict_match=true 时不允许 symbol 回退
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export HEAT_ENABLE_PERSIST=true
+    export HEAT_PERSIST_STRICT_MATCH=true
+    curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{persisted}"'
+  ```
+
+- 超时与异常处理
+
+  ```bash
+  # 设置极短超时测试持久化失败
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export HEAT_ENABLE_PERSIST=true
+    export HEAT_PERSIST_TIMEOUT_MS=1
+    curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{persisted,degrade}"'
+  # 期望：persisted:false, degrade:false（计算已完成）
+  ```
+
+- 并发测试（可选）
+
+  ```bash
+  # 同时发起多个请求测试锁冲突处理
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export HEAT_ENABLE_PERSIST=true
+    for i in 1 2 3; do
+      curl -s "http://localhost:8000/signals/heat?token=USDT" | jq .persisted &
+    done
+    wait'
+  ```
+
+- 降级演示（样本不足）
+
+  ```bash
+  # 临时提高最小样本要求
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc '
+    export HEAT_MIN_SAMPLE=99
+    curl -s "http://localhost:8000/signals/heat?token=RARE" | jq "{slope,trend,degrade}"'
+  ```
+
+- 错误参数测试
+
+  ```bash
+  # 缺少参数
+  curl -s "http://localhost:8000/signals/heat" -w "\nHTTP Status: %{http_code}\n"
+
+  # 同时提供两个参数
+  curl -s "http://localhost:8000/signals/heat?token=USDT&token_ca=0x123" -w "\nHTTP Status: %{http_code}\n"
+
+  # 非法 token_ca（缺少 0x）
+  curl -s "http://localhost:8000/signals/heat?token_ca=abc123" -w "\nHTTP Status: %{http_code}\n"
+  ```
+
+================================================================
+
+## Card D.1: 持久化匹配改为 event_key（含兜底与日志修正） (2025-09-10)
+
+### 验收步骤
+
+1. **在 DB 找一条有地址的最近事件，拿 event_key 和 token_ca**
+
+   ```bash
+   docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c \
+   "SELECT event_key, token_ca, symbol, last_ts
+    FROM events
+    WHERE token_ca ~ '^0x'
+    ORDER BY last_ts DESC
+    LIMIT 1"
+   ```
+
+2. **修改 infra/.env 开启持久化并关闭缓存，然后重启 api**
+
+   ```bash
+   # 编辑 infra/.env 设置:
+   # HEAT_ENABLE_PERSIST=true
+   # HEAT_CACHE_TTL=0
+   docker compose -f infra/docker-compose.yml up -d api
+   ```
+
+3. **宿主机请求 API 并验证写入（替换为上一步的真实地址与 event_key）**
+
+   ```bash
+   # 请求 heat API（替换 0x<真实地址>）
+   curl -s "http://localhost:8000/signals/heat?token_ca=0x<真实地址>" | jq .
+
+   # 验证数据库写入（替换 <真实event_key>）
+   docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c \
+   "SELECT features_snapshot->'heat'
+    FROM signals
+    WHERE event_key = '<真实event_key>'
+    LIMIT 1"
+   ```
+
+### 验收标准
+
+- 传入合法 token_ca 时：响应 persisted:true 且 DB 对应 event_key 的 features_snapshot->'heat' 为 JSON 对象，包含 asof_ts
+- 仅传 symbol 且 strict_match=false：允许解析并写入；strict_match=true：persisted:false 且 reason="event_key_not_found"
+- 解析失败、锁冲突、行不存在等分支：persisted:false，日志 reason 清晰
+- UPDATE 语句不再 JOIN events，仅按 event_key 命中
+
+### 回滚
+
+关闭 `HEAT_ENABLE_PERSIST` 即停止写库；读路径不受影响
+
+================================================================
+
+## Card E: 运维与可观测性完整指南 (2025-09-10)
+
+### 1. Events 重放验证
+
+#### Strict 模式（默认）
+
+```bash
+# 严格模式：要求 event_key 完全一致
+docker compose -f infra/docker-compose.yml exec -T api sh -c '
+  EVENT_MERGE_STRICT=true PYTHONPATH=. python -m scripts.verify_events --sample scripts/replay.jsonl
+'
 ```
 
+#### Loose 模式
+
+```bash
+# 宽松模式：允许 event_key 不一致
+docker compose -f infra/docker-compose.yml exec -T api sh -c '
+  EVENT_MERGE_STRICT=false PYTHONPATH=. python -m scripts.verify_events --sample scripts/replay.jsonl
+'
 ```
+
+#### 期望输出
+
+- 每个事件 `refs >= 2`（多源证据）
+- 重放的 `event_key` 与原始一致（strict 模式）
+- 包含 X + DEX/GoPlus 的复合证据
+
+### 2. Heat API 调用示例
+
+#### 基础调用
+
+```bash
+# 使用 token 参数
+curl -s "http://localhost:8000/signals/heat?token=USDT" | jq .
+
+# 使用 token_ca 参数
+curl -s "http://localhost:8000/signals/heat?token_ca=0xdac17f958d2ee523a2206206994597c13d831ec7" | jq .
+```
+
+#### 持久化测试
+
+```bash
+# 开启持久化
+docker compose -f infra/docker-compose.yml exec -T api sh -c '
+  HEAT_ENABLE_PERSIST=true HEAT_CACHE_TTL=0 \
+  curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{persisted, asof_ts}"
+'
+
+# 验证数据库写入
+docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "
+  SELECT event_key, features_snapshot->'heat' as heat_data
+  FROM signals
+  WHERE features_snapshot->'heat' IS NOT NULL
+  LIMIT 1;
+"
+```
+
+#### 阈值调整演示
+
+```bash
+# 调高 THETA_RISE（更难触发 up trend）
+docker compose -f infra/docker-compose.yml exec -T api sh -c '
+  THETA_RISE=1.0 curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{slope, trend}"
+'
+
+# 调低 THETA_RISE（更容易触发 up trend）
+docker compose -f infra/docker-compose.yml exec -T api sh -c '
+  THETA_RISE=0.1 curl -s "http://localhost:8000/signals/heat?token=USDT" | jq "{slope, trend}"
+'
+```
+
+### 3. 环境变量完整清单
+
+#### Event 相关
+
+| 变量名             | 默认值 | 作用               | 回滚方式     |
+| ------------------ | ------ | ------------------ | ------------ |
+| EVENT_KEY_SALT     | (空)   | event_key 生成盐值 | 设为空字符串 |
+| EVENT_MERGE_STRICT | true   | 严格模式合并证据   | 设为 false   |
+
+#### Heat 计算相关
+
+| 变量名           | 默认值 | 作用             | 回滚方式     |
+| ---------------- | ------ | ---------------- | ------------ |
+| THETA_RISE       | 0.2    | 上升趋势阈值     | 恢复为 0.2   |
+| HEAT_MIN_SAMPLE  | 3      | 最小样本数       | 恢复为 3     |
+| HEAT_NOISE_FLOOR | 1      | 噪声底限         | 恢复为 1     |
+| HEAT_EMA_ALPHA   | 0.0    | EMA 平滑系数     | 设为 0 关闭  |
+| HEAT_CACHE_TTL   | 30     | 缓存 TTL（秒）   | 设为 0 关闭  |
+| HEAT_MAX_ROWS    | 50000  | 最大扫描行数     | 恢复为 50000 |
+| HEAT_TIMEOUT_MS  | 1500   | 查询超时（毫秒） | 恢复为 1500  |
+
+#### Heat 持久化相关
+
+| 变量名                    | 默认值 | 作用             | 回滚方式    |
+| ------------------------- | ------ | ---------------- | ----------- |
+| HEAT_ENABLE_PERSIST       | false  | 是否持久化 heat  | 设为 false  |
+| HEAT_PERSIST_UPSERT       | true   | 是否 upsert 模式 | 恢复为 true |
+| HEAT_PERSIST_STRICT_MATCH | true   | 严格匹配模式     | 恢复为 true |
+| HEAT_PERSIST_TIMEOUT_MS   | 1500   | 持久化超时       | 恢复为 1500 |
+
+### 4. 回滚操作指南
+
+#### 完全关闭 Heat 持久化
+
+```bash
+# 修改 infra/.env
+echo "HEAT_ENABLE_PERSIST=false" >> infra/.env
+docker compose -f infra/docker-compose.yml up -d api
+```
+
+#### 关闭事件合并严格模式
+
+```bash
+# 修改 infra/.env
+echo "EVENT_MERGE_STRICT=false" >> infra/.env
+docker compose -f infra/docker-compose.yml up -d api
+```
+
+#### 关闭 Heat 缓存
+
+```bash
+# 修改 infra/.env
+echo "HEAT_CACHE_TTL=0" >> infra/.env
+docker compose -f infra/docker-compose.yml up -d api
+```
+
+#### 关闭 EMA 平滑
+
+```bash
+# 修改 infra/.env
+echo "HEAT_EMA_ALPHA=0" >> infra/.env
+docker compose -f infra/docker-compose.yml up -d api
+```
+
+### 5. 结构化日志字段清单
+
+#### pipeline.event.key
+
+```bash
+# 查看 event_key 生成日志
+docker compose -f infra/docker-compose.yml logs api | grep '"stage":"pipeline.event.key"' | jq .
+```
+
+字段：`event_key`, `salt`, `symbol`, `token_ca`, `topic_hash`
+
+#### pipeline.event.merge
+
+```bash
+# 查看事件合并日志
+docker compose -f infra/docker-compose.yml logs api | grep '"stage":"pipeline.event.merge"' | jq .
+```
+
+字段：`event_key`, `sources`, `strict`, `merged_count`
+
+#### pipeline.event.evidence.merge
+
+```bash
+# 查看证据合并日志
+docker compose -f infra/docker-compose.yml logs api | grep '"stage":"pipeline.event.evidence.merge"' | jq .
+```
+
+字段：`event_key`, `before_count`, `after_count`, `deduped`, `sources`
+
+#### signals.heat.compute
+
+```bash
+# 查看热度计算日志
+docker compose -f infra/docker-compose.yml logs api | grep '"stage":"signals.heat.compute"' | jq .
+```
+
+字段：`token`, `token_ca`, `cnt_10m`, `cnt_30m`, `slope`, `trend`, `degrade`, `rows_scanned`, `from_cache`
+
+#### signals.heat.persist
+
+```bash
+# 查看热度持久化日志
+docker compose -f infra/docker-compose.yml logs api | grep '"stage":"signals.heat.persist"' | jq .
+```
+
+字段：`token`, `token_ca`, `event_key`, `persisted`, `reason`, `strict_match`, `match_key`, `resolved_from`, `asof_ts`
+
+#### signals.heat.resolve
+
+```bash
+# 查看 event_key 解析日志
+docker compose -f infra/docker-compose.yml logs api | grep '"stage":"signals.heat.resolve"' | jq .
+```
+
+字段：`reason`, `token_ca`, `symbol`, `error`
+
+#### signals.heat.error
+
+```bash
+# 查看热度计算错误日志
+docker compose -f infra/docker-compose.yml logs api | grep '"stage":"signals.heat.error"' | jq .
+```
+
+字段：`error`, `token`, `token_ca`
+
+### 6. 完整验收流程
+
+```bash
+# 1. 准备测试数据
+docker compose -f infra/docker-compose.yml exec -T api python scripts/demo_ingest.py
+
+# 2. 验证事件重放
+docker compose -f infra/docker-compose.yml exec -T api sh -c '
+  PYTHONPATH=. python -m scripts.verify_events --sample scripts/replay.jsonl
+'
+
+# 3. 测试 Heat API（计算）
+curl -s "http://localhost:8000/signals/heat?token=USDT" | jq .
+
+# 4. 测试 Heat API（持久化）
+docker compose -f infra/docker-compose.yml exec -T api sh -c '
+  HEAT_ENABLE_PERSIST=true curl -s "http://localhost:8000/signals/heat?token=USDT" | jq .persisted
+'
+
+# 5. 验证日志输出
+docker compose -f infra/docker-compose.yml logs api --tail=100 | grep -E '"stage":"(signals\.heat|pipeline\.event)"' | jq -c '{stage:.stage, persisted:.persisted, trend:.trend}'
+
+# 6. 检查数据库状态
+docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "
+  SELECT COUNT(*) as total_events,
+         COUNT(DISTINCT event_key) as unique_events,
+         COUNT(CASE WHEN evidence_count > 1 THEN 1 END) as multi_source
+  FROM events;
+"
+```
+
+### 7. 故障排查
+
+#### Heat 不持久化
+
+```bash
+# 检查配置
+docker compose -f infra/docker-compose.yml exec api env | grep HEAT_
+
+# 检查 event_key 是否存在
+docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "
+  SELECT event_key, symbol, token_ca FROM events WHERE symbol='USDT' LIMIT 1;
+"
+
+# 检查 signals 表是否有对应行
+docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "
+  SELECT event_key FROM signals WHERE event_key IN (SELECT event_key FROM events WHERE symbol='USDT');
+"
+```
+
+#### 缓存问题
+
+```bash
+# 清理 Redis 缓存
+docker compose -f infra/docker-compose.yml exec redis redis-cli FLUSHDB
+
+# 验证缓存状态
+docker compose -f infra/docker-compose.yml exec redis redis-cli KEYS "heat:*"
+```
+
+================================================================
