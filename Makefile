@@ -1,4 +1,4 @@
-.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment verify-refiner demo-refine onchain-verify-once expert-dryrun
+.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment smoke-sentiment-batch hf-calibrate verify-refiner demo-refine onchain-verify-once expert-dryrun
 
 help:
 	@echo "Targets:"
@@ -7,6 +7,8 @@ help:
 	@echo "  demo               - run demo_ingest.py inside api container"
 	@echo "  bench-sentiment    - run sentiment analysis benchmark (set SENTIMENT_BACKEND=hf for HF)"
 	@echo "  smoke-sentiment    - test both sentiment backends with fixed inputs"
+	@echo "  smoke-sentiment-batch - run batch sentiment processing with HF backend"
+	@echo "  hf-calibrate       - calibrate HF sentiment thresholds with golden data"
 	@echo "  dbtest             - quick DB insert/upsert smoke test"
 	@echo "  api/worker         - run services locally (placeholder)"
 	@echo "  test/seed          - run tests / seed database (placeholder)"
@@ -70,6 +72,16 @@ bench-sentiment:
 smoke-sentiment:
 	@echo "Running sentiment smoke test for both backends..."
 	@docker compose -f infra/docker-compose.yml exec -T api python scripts/smoke_sentiment.py
+
+smoke-sentiment-batch:
+	@BACKEND=$${BACKEND:-hf}; FILE=$${FILE:-data/sample.jsonl}; \
+	echo "Running batch sentiment processing (backend=$$BACKEND, file=$$FILE)..."; \
+	docker compose -f infra/docker-compose.yml exec -T api python scripts/smoke_sentiment.py --batch $$FILE --backend $$BACKEND
+
+hf-calibrate:
+	@FILE=$${FILE:-data/golden_sentiment.jsonl}; REPORT=$${REPORT:-reports}; \
+	echo "Running HF sentiment threshold calibration..."; \
+	docker compose -f infra/docker-compose.yml exec -T api python scripts/hf_calibrate.py --file $$FILE --report $$REPORT --backend hf
 
 clean:
 	@echo "Cleaning up..."

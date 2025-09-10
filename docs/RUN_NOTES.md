@@ -1552,3 +1552,31 @@ docker compose -f infra/docker-compose.yml exec redis redis-cli KEYS "heat:*"
 ```
 
 ================================================================
+
+================================================================
+
+## Day17 — HF 批量与阈值校准 (2025-09-11)
+
+- 批量客户端冒烟测试（正常）
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc \
+  'python scripts/smoke_sentiment.py --batch data/sample.jsonl --backend hf | head -n 5'
+
+- 批量客户端冒烟测试（强制降级）
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc \
+  "HF_BACKEND=inference HF_TIMEOUT_MS=1 python scripts/smoke_sentiment.py --batch data/sample.jsonl --backend hf --summary-json"
+
+- 规则后端对照输出
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc \
+  'python scripts/smoke_sentiment.py --batch data/sample.jsonl --backend rules --summary-json'
+
+- 阈值校准（100 样本）
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc \
+  'python scripts/hf_calibrate.py --file data/golden_sentiment.jsonl --report reports --backend hf | tee /tmp/hf_cal.out'
+
+- 查看校准结果与推荐阈值
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc \
+  'ls -l reports | tail -n 5 && head -n 20 reports/hf*calibration*\*.env.patch'
+
+- Makefile 快捷目标
+  make smoke-sentiment-batch
+  make hf-calibrate

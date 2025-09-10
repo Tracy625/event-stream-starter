@@ -416,6 +416,18 @@
     - `HEAT_ENABLE_PERSIST=false` 再调接口，`persisted=false` 且不写库。
     - `EVENT_MERGE_STRICT=false` 重跑 verify，共现计数为 0。
 
+- Day 17: HF 批量与阈值校准 (verified)
+
+  - Card A: 实现 `api/services/hf_client.py`，统一批量接口，支持 local/inference 后端，失败率降级
+  - Card B: 增强 `scripts/smoke_sentiment.py`，支持 --batch 和 --summary-json，处理 BrokenPipeError
+  - Card C: 实现 `scripts/hf_calibrate.py`，网格搜索最优阈值，生成 JSON 报告和 env.patch
+  - 产物：`reports/hf_calibration_*.json` 和 `.env.patch` 包含推荐阈值（基于 Macro-F1）
+  - 降级链路验证：HF_TIMEOUT_MS=1 时批量结果含 degrade:"HF_off" 标记
+  - 无 schema 变更，Day4 单条预测保持兼容
+  - 回滚方式：删除 api/services/hf_client.py，恢复 api/hf_sentiment.py 原调用，移除 .env 新增变量
+  - 标签/分数口径沿用 Day4：`{"pos","neu","neg"}` 与 `score=P(pos)-P(neg)`（[-1,1] 截断）。
+  - 阈值仅作“建议”，不自动写回 `.env`；以配置为准，避免配置漂移。
+
 ## Today
 
-### Acceptance
+### acceptance
