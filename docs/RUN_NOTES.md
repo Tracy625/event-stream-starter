@@ -1580,3 +1580,45 @@ docker compose -f infra/docker-compose.yml exec redis redis-cli KEYS "heat:*"
 - Makefile 快捷目标
   make smoke-sentiment-batch
   make hf-calibrate
+
+================================================================
+
+## Day18 — Rules Engine Integration (2025-09-12)
+
+- **主要要点**
+  - 集成规则引擎（`rules_engine`），支持多场景评估、热加载与 refiner（LLM）切换。
+  - 路由 `/rules/eval` 支持事件级别规则评估，返回 level/reasons/all_reasons/meta 字段。
+  - 支持通过环境变量 `RULES_REFINER` 控制是否启用 refiner。
+  - 支持热加载：修改 `rules/rules.yml` 后，自动检测并重新加载，无需重启服务。
+
+### 运行验收命令
+
+```bash
+# 1. 集成测试（3 场景 + 热加载 + refiner 开关）
+make verify_rules
+```
+
+```bash
+# 2. 手动调用 API 路由
+curl -s "http://localhost:8000/rules/eval?event_key=eth:DEMO1:2025-09-10T10:00:00Z" | jq
+# 验证返回字段含 level、reasons、all_reasons、meta.refine_used
+```
+
+```bash
+# 3. 查看日志（api 容器）
+docker compose -f infra/docker-compose.yml logs -f api | egrep "rules.eval|rules.reload|rules.refine"
+```
+
+```bash
+# 4. 验证 ENV 开关
+RULES_REFINER=on make verify_rules
+# 确认 meta.refine_used=true
+```
+
+```bash
+# 5. 热加载测试
+# 修改 rules/rules.yml 并等待 RULES_TTL_SEC 秒，调用 API 确认 meta.hot_reloaded=true
+# （可通过 touch rules/rules.yml 或编辑后保存触发）
+```
+
+---

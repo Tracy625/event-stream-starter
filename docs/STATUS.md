@@ -428,6 +428,22 @@
   - 标签/分数口径沿用 Day4：`{"pos","neu","neg"}` 与 `score=P(pos)-P(neg)`（[-1,1] 截断）。
   - 阈值仅作“建议”，不自动写回 `.env`；以配置为准，避免配置漂移。
 
+- Day18: 规则引擎 + 极简建议器（稳健版） (verified)
+
+  - 18.1 规则引擎核心：`api/rules/eval_event.py` + `rules/rules.yml`，支持分组/优先级/权重，ENV 覆盖（`THETA_LIQ/THETA_VOL/THETA_SENT`），mtime 热加载（TTL 默认 5s），解析失败回退旧版；安全表达式（AST 白名单，字段白名单），缺源点名（dex/hf/goplus），输出 `reasons≤3` 与 `all_reasons`。
+  - 18.2 API 路由：新增 `api/routes/rules.py` 暴露 `GET /rules/eval?event_key=...`，返回 `level/score/reasons/all_reasons/evidence/meta`，404/422/500 错误处理，结构化日志 `rules.eval`。
+  - 18.3 门后精析适配：`api/rules/refiner_adapter.py`，ENV 开关 `RULES_REFINER`（默认 off），800ms 预算，失败降级并打点 `rules.refine_degrade`，不改事实，仅做措辞压缩去冗，`meta.refine_used` 标记。
+  - 18.4 集成测试（pytest）：`tests/test_rules_eval.py` 覆盖 3 场景（完整/缺 DEX/缺 HF）、规则热加载、门后精析开关探活；使用 TestClient、DEMO key 插入与回滚清理；确保 `reasons` 为 `all_reasons` 前缀；`Makefile verify_rules` 一键运行。
+  - 18.5 配置与文档：`.env.example` 补充 `THETA_LIQ/THETA_VOL/THETA_SENT/RULES_TTL_SEC/RULES_REFINER`；`Makefile` 新增 `verify_rules` 目标（容器内运行 pytest）；文档保持不覆盖。
+  - 18.6 并发与热加载安全：`RuleLoader` 引入 `threading.Lock` 原子替换；`time.monotonic()` 节流；SHA256 `etag`；256KB 文件上限、200 条规则上限；ENV 白名单；AST 校验；失败回退旧版本；日志 `rules.reloaded / rules.reload_error`（含 `etag_prefix`）。
+  - 18.7 错误处理与日志：路由生成 `request_id=uuid4()` 贯穿；成功路径记录 `all_reasons_n` 而非全量；异常日志裁剪 `traceback≤500`；日志统一包含 `module/request_id/rules_version/hot_reloaded/latency_ms/refine_used`；错误按 `reason` 分类（`yaml_parse_error/file_size_exceeded/io_error/validation_failed/unexpected_error`）。
+
+  **Runbook（Day18 验收）**
+
+  - 一键测试：`make verify_rules`
+  - 单次调用：`curl -s "http://localhost:8000/rules/eval?event_key=eth:DEMO1:2025-09-10T10:00:00Z" | jq '{level,score,reasons,all_reasons,meta}'`
+  - 查看日志：`docker compose -f infra/docker-compose.yml logs -f api | rg 'rules\\.(eval|reloaded|reload_error|refine_degrade)'`
+
 ## Today
 
 ### acceptance
