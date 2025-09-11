@@ -136,6 +136,10 @@ verify-topic-push:
 	@echo "Verifying topic push to Telegram..."
 	cd infra && docker compose exec -T api python -m api.scripts.verify_topic_push
 
+verify_rules:
+	@echo "Verifying rule engine with pytest..."
+	docker compose -f infra/docker-compose.yml exec -T api pytest -q tests/test_rules_eval.py
+
 push-topic-digest:
 	@echo "Pushing daily topic digest..."
 	cd infra && docker compose exec -T worker python -c "from worker.jobs.push_topic_candidates import push_topic_digest; push_topic_digest()"
