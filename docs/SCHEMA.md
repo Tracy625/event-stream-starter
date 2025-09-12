@@ -345,3 +345,155 @@ ALTER TABLE signals ADD COLUMN onchain_confidence NUMERIC(4,3);
 - growth_ratio: Computed as (current.addr_active - previous.addr_active) / previous.addr_active for same (chain,address,window_minutes)
 - calc_version: Ensures idempotent updates (only update if new version &gt;= existing)
 - 注：signals.confidence 仍为 INTEGER；链上评估置信度写入 onchain_confidence（NUMERIC(4,3)）。
+
+---
+
+## 内部卡片结构 (Internal Card Structure)
+
+**版本**: cards@19.0  
+**更新日期**: 2025-09-12 (Day19)  
+**Schema文件**: `schemas/cards.schema.json`  
+**共享定义**: `schemas/common.schema.json` (diagnosticFlags, ohlcFrame通过$ref统一定义)
+
+### 字段表
+
+| 字段路径 | 类型 | 必填 | 说明 | 约束 |
+|---------|------|-----|------|-----|
+| **顶层** | | | | |
+| card_type | string | ✓ | 卡片类型 | enum: primary, secondary, topic |
+| event_key | string | ✓ | 事件键 | pattern: ^[A-Z0-9:_\-\.]{8,128}$ |
+| data | object | ✓ | 数据载荷 | required: goplus, dex |
+| summary | string | ✓ | 摘要文本 | minLength: 4, maxLength: 280 |
+| risk_note | string | ✓ | 风险提示 | minLength: 4, maxLength: 160 |
+| rendered | object | | 渲染结果 | 含 tg, ui |
+| evidence | array | | 证据列表 | 元素含 type, desc, url |
+| meta | object | ✓ | 元数据 | required: version, data_as_of, summary_backend |
+| **data.goplus** | | | | |
+| risk | string | ✓ | 风险等级 | enum: green, yellow, red, gray |
+| risk_source | string | ✓ | 来源标识 | 如 GoPlus@vX.Y |
+| tax_buy | number | | 买入税率 | 0 ≤ x ≤ 1 |
+| tax_sell | number | | 卖出税率 | 0 ≤ x ≤ 1 |
+| lp_locked | boolean | | 流动性锁定 | |
+| honeypot | boolean | | 蜜罐标记 | |
+| diagnostic | object | | 诊断信息 | 含 source, cache, stale, degrade |
+| **data.dex** | | | | |
+| price_usd | number | | USD价格 | minimum: 0 |
+| liquidity_usd | number | | USD流动性 | minimum: 0 |
+| fdv | number | | 完全稀释估值 | minimum: 0 |
+| ohlc | object | | OHLC数据 | 含 m5, m15, h1 |
+| diagnostic | object | | 诊断信息 | 同 goplus |
+| **data.onchain** | | | | |
+| features_snapshot | object | | 特征快照 | 宽松对象 |
+| source_level | string | | 来源等级 | |
+| **data.rules** | | | | |
+| level | string | ✓ | 规则等级 | enum: none, watch, caution, risk |
+| score | number | | 评分 | 0 ≤ x ≤ 100 |
+| reasons | array | | 简要原因 | max 3项, 每项 ≤120字符 |
+| all_reasons | array | | 详细原因 | max 20项, 每项 ≤160字符 |
+| **meta** | | | | |
+| version | string | ✓ | 版本号 | const: cards@19.0 |
+| data_as_of | string | ✓ | 数据时间 | format: date-time |
+| summary_backend | string | ✓ | 摘要后端 | enum: llm, template |
+| used_refiner | string | | 使用的refiner | |
+| degrade | boolean | | 降级标记 | |
+
+### 示例 JSON
+
+```json
+{
+  "card_type": "primary",
+  "event_key": "ETH:TOKEN:0X1234567890ABCDEF",
+  "data": {
+    "goplus": {
+      "risk": "yellow",
+      "risk_source": "GoPlus@v1.2",
+      "tax_buy": 0.05,
+      "tax_sell": 0.10,
+      "lp_locked": true,
+      "honeypot": false,
+      "diagnostic": {
+        "source": "api",
+        "cache": false,
+        "stale": false,
+        "degrade": false
+      }
+    },
+    "dex": {
+      "price_usd": 0.0234,
+      "liquidity_usd": 125000.50,
+      "fdv": 2340000,
+      "ohlc": {
+        "m5": {
+          "open": 0.0230,
+          "high": 0.0236,
+          "low": 0.0228,
+          "close": 0.0234,
+          "ts": "2025-09-12T10:05:00Z"
+        },
+        "m15": {
+          "open": 0.0225,
+          "high": 0.0238,
+          "low": 0.0224,
+          "close": 0.0234,
+          "ts": "2025-09-12T10:15:00Z"
+        }
+      }
+    },
+    "rules": {
+      "level": "watch",
+      "score": 65,
+      "reasons": ["High sell tax detected", "Moderate liquidity concerns"]
+    }
+  },
+  "summary": "Token showing moderate risk with 10% sell tax and $125k liquidity on DEX",
+  "risk_note": "Elevated sell tax may impact exit strategy",
+  "meta": {
+    "version": "cards@19.0",
+    "data_as_of": "2025-09-12T10:15:00Z",
+    "summary_backend": "llm"
+  }
+}
+```
+
+---
+
+## 来源与合流规则 (Source Merging Rules)
+
+**版本**: Day19  
+**更新日期**: 2025-09-12
+
+### 数据来源映射
+
+卡片数据从以下来源合流：
+
+| 目标字段 | 来源Provider | 降级策略 |
+|---------|------------|---------|
+| data.goplus | goplus_provider.get_latest() | 省略字段，meta.degrade=true |
+| data.dex | dex_provider.get_latest() | 省略字段，meta.degrade=true |
+| data.onchain | onchain_provider.get_snapshot() | 整体省略（可选字段） |
+| data.rules | rules.evaluator.get_rules() | 默认level="none" |
+| evidence | evidence.store.get_by_event() | 整体省略（可选字段） |
+| summary/risk_note | cards.summarizer.summarize_card() | 模板降级 |
+
+### 时间戳策略
+
+- **data_as_of**: 取所有参与合流的数据源中最旧的时间戳（as_of/ts/updated_at）
+- 若无任何时间戳，使用当前UTC时间并标记meta.degrade=true
+- 时间格式统一为ISO8601，UTC时区，以'Z'结尾
+
+### 降级规则
+
+当核心数据源缺失时：
+1. 设置 meta.degrade = true
+2. 在 rules.reasons 数组追加缺失原因（最多3条）
+3. 继续构建卡片，不抛异常（除非goplus和dex都缺失）
+
+### 卡片类型判定
+
+- **primary**: 有onchain数据且rules.level为caution/risk
+- **secondary**: rules.level为watch
+- **topic**: 其他情况
+
+### 校验要求
+
+所有生成的卡片必须通过 schemas/cards.schema.json 校验，失败则抛出ValueError

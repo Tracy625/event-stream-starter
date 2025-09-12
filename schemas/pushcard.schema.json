@@ -111,23 +111,7 @@
       }
     },
     "states": {
-      "type": "object",
-      "required": ["cache", "degrade", "stale", "reason"],
-      "additionalProperties": false,
-      "properties": {
-        "cache": {
-          "type": "boolean"
-        },
-        "degrade": {
-          "type": "boolean"
-        },
-        "stale": {
-          "type": "boolean"
-        },
-        "reason": {
-          "type": "string"
-        }
-      }
+      "$ref": "common.schema.json#/$defs/statesFlags"
     },
     "evidence": {
       "type": "object",

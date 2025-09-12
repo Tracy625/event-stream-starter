@@ -1,0 +1,214 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://guids/schema/cards.schema.json",
+  "title": "GUIDS Internal Card (Day19)",
+  "description": "Normalized internal card payload for preview/render/push pipeline",
+  "type": "object",
+  "required": ["card_type", "event_key", "data", "summary", "risk_note", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "card_type": {
+      "type": "string",
+      "enum": ["primary", "secondary", "topic"]
+    },
+    "event_key": {
+      "type": "string",
+      "pattern": "^[A-Z0-9:_\\-\\.]{8,128}$"
+    },
+    "data": {
+      "type": "object",
+      "required": ["goplus", "dex"],
+      "additionalProperties": false,
+      "properties": {
+        "goplus": {
+          "type": "object",
+          "required": ["risk", "risk_source"],
+          "additionalProperties": false,
+          "properties": {
+            "risk": {
+              "type": "string",
+              "enum": ["green", "yellow", "red", "gray"]
+            },
+            "tax_buy": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "tax_sell": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "lp_locked": {
+              "type": "boolean"
+            },
+            "honeypot": {
+              "type": "boolean"
+            },
+            "risk_source": {
+              "type": "string"
+            },
+            "diagnostic": {
+              "$ref": "common.schema.json#/$defs/diagnosticFlags"
+            }
+          }
+        },
+        "dex": {
+          "type": "object",
+          "required": [],
+          "additionalProperties": false,
+          "properties": {
+            "price_usd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "liquidity_usd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "fdv": {
+              "type": "number",
+              "minimum": 0
+            },
+            "ohlc": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "m5": {
+                  "$ref": "common.schema.json#/$defs/ohlcFrame"
+                },
+                "m15": {
+                  "$ref": "common.schema.json#/$defs/ohlcFrame"
+                },
+                "h1": {
+                  "$ref": "common.schema.json#/$defs/ohlcFrame"
+                }
+              }
+            },
+            "diagnostic": {
+              "$ref": "common.schema.json#/$defs/diagnosticFlags"
+            }
+          }
+        },
+        "onchain": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "features_snapshot": {
+              "type": "object"
+            },
+            "source_level": {
+              "type": "string"
+            }
+          }
+        },
+        "rules": {
+          "type": "object",
+          "required": ["level"],
+          "additionalProperties": false,
+          "properties": {
+            "level": {
+              "type": "string",
+              "enum": ["none", "watch", "caution", "risk"]
+            },
+            "score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "reasons": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "minItems": 0,
+              "maxItems": 3,
+              "uniqueItems": false
+            },
+            "all_reasons": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 160
+              },
+              "minItems": 0,
+              "maxItems": 20
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 280
+    },
+    "risk_note": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 160
+    },
+    "rendered": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tg": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "ui": {
+          "type": "string",
+          "maxLength": 8192
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "desc"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "maxLength": 32
+          },
+          "desc": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["version", "data_as_of", "summary_backend"],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string",
+          "const": "cards@19.0"
+        },
+        "data_as_of": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "summary_backend": {
+          "type": "string",
+          "enum": ["llm", "template"]
+        },
+        "used_refiner": {
+          "type": "string"
+        },
+        "degrade": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

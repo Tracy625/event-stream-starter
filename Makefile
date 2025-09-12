@@ -1,4 +1,4 @@
-.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment smoke-sentiment-batch hf-calibrate verify-refiner demo-refine onchain-verify-once expert-dryrun
+.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment smoke-sentiment-batch hf-calibrate verify-refiner demo-refine onchain-verify-once expert-dryrun verify_cards
 
 help:
 	@echo "Targets:"
@@ -183,3 +183,12 @@ expert-dryrun:
 		-e EXPERT_VIEW=on \
 		-e EXPERT_KEY=devkey \
 		api python -c "import requests, json; r = requests.get('http://localhost:8000/expert/onchain?chain=eth&address=$(ADDRESS)', headers={'X-Expert-Key': 'devkey'}); print(json.dumps(r.json() if r.status_code == 200 else {'error': f'HTTP {r.status_code}: {r.text}'}, indent=2))"
+
+# ----- Cards Verification (Day19) -----
+verify_cards:
+	@if [ -z "$(EVENT_KEY)" ]; then \
+		echo "Error: EVENT_KEY parameter required. Usage: EVENT_KEY=TEST_BAD make verify_cards"; \
+		exit 1; \
+	fi
+	@echo "Verifying /cards/preview for EVENT_KEY=$(EVENT_KEY)..."
+	@python scripts/verify_cards_preview.py --event-key $(EVENT_KEY)

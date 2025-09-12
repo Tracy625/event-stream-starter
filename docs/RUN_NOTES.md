@@ -1622,3 +1622,56 @@ RULES_REFINER=on make verify_rules
 ```
 
 ---
+
+================================================================
+
+## Day19 — Internal Cards Pipeline (2025-09-12)
+
+### 验收要点
+
+- Schema：内部卡片契约 `schemas/cards.schema.json` 与 pushcard 分层，强约束字段。
+- Summarizer：受限摘要器，仅生成 `summary` 与 `risk_note`，支持 LLM/模板降级。
+- Builder：合流 goplus/dex/onchain/rules/evidence，调用 summarizer 并返回符合 Schema 的卡片。
+- Preview 路由：`GET /cards/preview` 输出校验合规。
+- Verify 脚本：一键执行，支持降级与模板兜底。
+
+### 运行验收
+
+- 校验 Schema
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api \
+    python scripts/validate_cards.py | jq ".pass"
+
+  ```
+
+- 测试 Summarizer
+
+  docker compose -f infra/docker-compose.yml exec -T api \
+   python test_summarizer.py
+
+- 构建单卡（最小例）
+
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.cards.build import build_card
+  import json
+  card = build_card("TEST_BAD", render=True)
+  print(json.dumps(card, indent=2, ensure_ascii=False))
+  PY
+
+- 预览路由
+
+  curl -s "http://localhost:8000/cards/preview?event_key=TEST_BAD&render=1" | jq
+
+- 一键校验
+
+  EVENT_KEY=TEST_BAD make verify_cards
+
+- 验证降级（强制 template）
+
+CARDS_SUMMARY_TIMEOUT_MS=1 EVENT_KEY=TEST_BAD make verify_cards
+
+- 备注
+  • event*key 必须大写匹配模式 ^[A-Z0-9:*\-\.]{8,128}$。
+  • 降级模式下 meta.summary_backend="template"，summary/risk_note 仍保证非空。
+  • Rollback：删除 schemas/cards.schema.json、api/cards/\*、api/routes/cards.py 以及 scripts/verify_cards_preview.py 的新增内容。
