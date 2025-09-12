@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://guids/schema/common.schema.json",
+  "title": "Common Schema Definitions",
+  "description": "Shared definitions used across multiple GUIDS schemas",
+  "$defs": {
+    "diagnosticFlags": {
+      "type": "object",
+      "description": "Diagnostic information for data source status",
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Data source identifier"
+        },
+        "cache": {
+          "type": "boolean",
+          "description": "Whether data was served from cache"
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "Whether data is considered stale"
+        },
+        "degrade": {
+          "type": "boolean",
+          "description": "Whether service is in degraded mode"
+        },
+        "last_checked": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last time the data source was checked"
+        }
+      },
+      "required": ["source", "cache", "stale", "degrade"],
+      "additionalProperties": false
+    },
+    "ohlcFrame": {
+      "type": "object",
+      "description": "OHLC (Open/High/Low/Close) price frame",
+      "additionalProperties": false,
+      "required": ["open", "high", "low", "close", "ts"],
+      "properties": {
+        "open": {
+          "type": "number",
+          "description": "Opening price"
+        },
+        "high": {
+          "type": "number",
+          "description": "Highest price"
+        },
+        "low": {
+          "type": "number",
+          "description": "Lowest price"
+        },
+        "close": {
+          "type": "number",
+          "description": "Closing price"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp for this OHLC frame"
+        }
+      }
+    },
+    "statesFlags": {
+      "type": "object",
+      "description": "State flags for pushcard",
+      "required": ["cache", "degrade", "stale", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "type": "boolean",
+          "description": "Whether data was served from cache"
+        },
+        "degrade": {
+          "type": "boolean",
+          "description": "Whether service is in degraded mode"
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "Whether data is considered stale"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for the current state"
+        }
+      }
+    }
+  }
+}
