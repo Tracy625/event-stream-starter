@@ -18,7 +18,7 @@ import pytest
 
 def test_cache_ttl_decreases():
     """Test that TTL decreases on cache hit."""
-    from api.routes_signals import get_signal_summary
+    from api.routes.signals_summary import get_signal_summary
     
     mock_db = Mock()
     mock_redis = Mock()
@@ -64,7 +64,7 @@ def test_cache_ttl_decreases():
 
 def test_confidence_precision():
     """Test that confidence has at most 3 decimal places."""
-    from api.routes_signals import get_signal_summary
+    from api.routes.signals_summary import get_signal_summary
     
     mock_db = Mock()
     mock_redis = Mock()
@@ -115,7 +115,7 @@ def test_confidence_precision():
 
 def test_asof_ts_utc_z():
     """Test that asof_ts ends with Z for UTC."""
-    from api.routes_signals import get_signal_summary
+    from api.routes.signals_summary import get_signal_summary
     
     mock_db = Mock()
     mock_redis = Mock()
@@ -157,7 +157,7 @@ def test_asof_ts_utc_z():
 
 def test_redis_failure_graceful():
     """Test graceful handling when Redis fails."""
-    from api.routes_signals import get_signal_summary
+    from api.routes.signals_summary import get_signal_summary
     
     mock_db = Mock()
     mock_redis = Mock()
@@ -189,7 +189,7 @@ def test_redis_failure_graceful():
 
 def test_not_found():
     """Test 404 when signal not found."""
-    from api.routes_signals import get_signal_summary
+    from api.routes.signals_summary import get_signal_summary
     from fastapi import HTTPException
     
     mock_db = Mock()
@@ -209,7 +209,7 @@ def test_not_found():
 
 def test_insufficient_verdict():
     """Test insufficient verdict when no features."""
-    from api.routes_signals import get_signal_summary
+    from api.routes.signals_summary import get_signal_summary
     
     mock_db = Mock()
     mock_redis = Mock()
@@ -238,7 +238,7 @@ def test_insufficient_verdict():
 
 def test_serialize_functions():
     """Test serialization helper functions."""
-    from api.routes_signals import serialize_datetime, serialize_decimal
+    from api.routes.signals_summary import serialize_datetime, serialize_decimal
     
     # Test datetime serialization
     dt_naive = datetime(2025, 9, 8, 12, 0, 0)
@@ -264,7 +264,7 @@ def test_serialize_functions():
 
 def test_stored_verdict_fallback():
     """Test using stored confidence when features unavailable."""
-    from api.routes_signals import get_signal_summary
+    from api.routes.signals_summary import get_signal_summary
     
     mock_db = Mock()
     mock_redis = Mock()

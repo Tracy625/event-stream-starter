@@ -1,0 +1,258 @@
+.
+├── __pycache__
+│   ├── test_events.cpython-311-pytest-8.4.2.pyc
+│   ├── test_heat_simple.cpython-311-pytest-8.4.2.pyc
+│   ├── test_three_branch_verify.cpython-311-pytest-8.4.2.pyc
+│   └── test_verify_job.cpython-311-pytest-8.4.2.pyc
+├── api
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   ├── __init__.cpython-311.pyc
+│   │   ├── database.cpython-311.pyc
+│   │   ├── db.cpython-311.pyc
+│   │   ├── dedup.cpython-311.pyc
+│   │   ├── events.cpython-311.pyc
+│   │   ├── filter.cpython-311.pyc
+│   │   ├── main.cpython-311.pyc
+│   │   ├── metrics.cpython-311.pyc
+│   │   ├── models.cpython-311.pyc
+│   │   ├── refine.cpython-311.pyc
+│   │   ├── routes_expert_onchain.cpython-311.pyc
+│   │   └── routes_signals.cpython-311.pyc
+│   ├── alembic
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── env.py
+│   │   ├── script.py.mako
+│   │   └── versions
+│   ├── alembic.ini
+│   ├── cache.py
+│   ├── cards
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── dedup.py
+│   │   └── generator.py
+│   ├── clients
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── bq_client.py
+│   │   ├── goplus.py
+│   │   └── x_client.py
+│   ├── database.py
+│   ├── db.py
+│   ├── dedup.py
+│   ├── Dockerfile
+│   ├── events.py
+│   ├── filter.py
+│   ├── hf_adapter.py
+│   ├── hf_sentiment.py
+│   ├── jobs
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── goplus_scan.py
+│   │   └── onchain
+│   ├── kbir_keyphrases.py
+│   ├── keyphrases.py
+│   ├── keyphrases.py.bak.1755849871
+│   ├── keyphrases.py.bak.1755849903
+│   ├── main.py
+│   ├── metrics.py
+│   ├── models.py
+│   ├── normalize
+│   │   ├── __pycache__
+│   │   └── x.py
+│   ├── onchain
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── dto.py
+│   │   └── rules_engine.py
+│   ├── providers
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── dex_provider.py
+│   │   ├── goplus_provider.py
+│   │   └── onchain
+│   ├── refine.py
+│   ├── refiner.py
+│   ├── requirements.txt
+│   ├── routes
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── dex.py
+│   │   ├── ingest_x.py
+│   │   ├── onchain.py
+│   │   ├── security.py
+│   │   ├── signals_heat.py
+│   │   ├── signals_summary.py
+│   │   └── signals_topic.py
+│   ├── routes_expert_onchain.py
+│   ├── rules_sentiment.py
+│   ├── schemas
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── onchain.py
+│   │   ├── refine_schema.py
+│   │   ├── security.py
+│   │   └── topic.py
+│   ├── scripts
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── demo_refine.py
+│   │   ├── seed_topic_mentions.py
+│   │   ├── test_card_templates.py
+│   │   ├── test_dex_provider.py
+│   │   ├── validate_cards.py
+│   │   ├── verify_dex_snapshot.py
+│   │   ├── verify_goplus_security.py
+│   │   ├── verify_onchain_features.py
+│   │   ├── verify_primary_cards.py
+│   │   ├── verify_refiner.py
+│   │   ├── verify_topic_push.py
+│   │   ├── verify_topic_signal.py
+│   │   ├── verify_x_avatar.py
+│   │   └── verify_x_kol.py
+│   ├── security
+│   │   └── goplus.py
+│   ├── sentiment
+│   │   ├── __init__.py
+│   │   └── router.py
+│   ├── services
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── hf_client.py
+│   │   ├── telegram.py
+│   │   └── topic_analyzer.py
+│   ├── signals
+│   │   ├── __pycache__
+│   │   └── heat.py
+│   ├── utils
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── ca.py
+│   │   ├── cache.py
+│   │   └── logging.py
+│   └── worker.py
+├── CARD_B_VERIFY_COMPLETE.md
+├── CARD_B_VERIFY_SUMMARY.md
+├── celerybeat-schedule
+├── CLAUDE.md
+├── configs
+│   ├── topic_blacklist.yml
+│   ├── topic_whitelist.yml
+│   └── x_kol.yaml
+├── data
+│   ├── golden_sentiment.jsonl
+│   └── sample.jsonl
+├── docs
+│   ├── adr
+│   │   ├── 20250822-hf-sentiment-keywords.md
+│   │   ├── 20250823-events-upsert-schema.md
+│   │   └── 20250825-refiner-Integration.md
+│   ├── ADR_onchain_rules.md
+│   ├── BRIEF.md
+│   ├── CLAUDE_HANDOVER.md
+│   ├── HANDOVER.md
+│   ├── KICKOFF.md
+│   ├── MVP27_PLAN.md
+│   ├── RUN_NOTES.md
+│   ├── SCHEMA.md
+│   ├── STATUS.md
+│   ├── WORKFLOW_RULES.md
+│   └── WORKFLOW.md
+├── infra
+│   ├── api
+│   ├── docker-compose.yml
+│   ├── rules
+│   └── secrets
+│       └── guids-ro-3873d968c49f.json
+├── jobs
+├── Makefile
+├── migration_012_adaptive_summary.md
+├── migration_012_final.md
+├── migration_012_summary.md
+├── migrations
+├── out.log
+├── project_tree.txt
+├── reports
+├── rules
+│   ├── onchain.yml
+│   ├── risk_rules.example.yml
+│   ├── risk_rules.yml
+│   └── topic_merge.yml
+├── runbook_verify_signal.md
+├── schemas
+│   ├── __init__.py
+│   └── pushcard.schema.json
+├── scripts
+│   ├── __pycache__
+│   │   ├── test_heat_persist.cpython-311-pytest-8.4.2.pyc
+│   │   └── verify_events.cpython-311.pyc
+│   ├── bench_sentiment.py
+│   ├── demo_ingest.py
+│   ├── golden.jsonl
+│   ├── hf_calibrate.py
+│   ├── replay.jsonl
+│   ├── smoke_sentiment.py
+│   ├── test_heat_persist.py
+│   └── verify_events.py
+├── templates
+│   ├── cards
+│   │   ├── __init__.py
+│   │   ├── primary_card.tg.j2
+│   │   ├── primary_card.ui.j2
+│   │   ├── secondary_card.tg.j2
+│   │   └── secondary_card.ui.j2
+│   └── sql
+│       ├── eth
+│       └── freshness_eth.sql
+├── test_events.py
+├── test_heat_simple.py
+├── test_three_branch_verify.py
+├── test_three_branch_verify.sh
+├── test_verify_e2e.sh
+├── test_verify_job.py
+├── tests
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   ├── __init__.cpython-311.pyc
+│   │   ├── test_expert_onchain.cpython-311-pytest-8.4.2.pyc
+│   │   ├── test_routes_signals.cpython-311-pytest-8.4.2.pyc
+│   │   ├── test_rules_engine_edgecases.cpython-311-pytest-8.4.2.pyc
+│   │   ├── test_rules_engine_edgecases.cpython-311.pyc
+│   │   ├── test_rules_engine.cpython-311-pytest-8.4.2.pyc
+│   │   ├── test_schema_guard.cpython-311-pytest-8.4.2.pyc
+│   │   └── test_verify_signal.cpython-311-pytest-8.4.2.pyc
+│   ├── test_expert_onchain.py
+│   ├── test_routes_signals.py
+│   ├── test_rules_engine.py
+│   ├── test_schema_guard.py
+│   └── test_verify_signal.py
+├── ui
+│   ├── package.json
+│   └── README.md
+├── verify_commands.md
+├── verify_signal_adaptive.py
+├── verify_signal_improvements.md
+├── verify_state_migration.py
+└── worker
+    ├── __init__.py
+    ├── __pycache__
+    │   ├── __init__.cpython-311.pyc
+    │   ├── app.cpython-311.pyc
+    │   └── tasks.cpython-311.pyc
+    ├── app.py
+    ├── celeryconfig.py
+    ├── Dockerfile
+    ├── jobs
+    │   ├── __init__.py
+    │   ├── __pycache__
+    │   ├── onchain
+    │   ├── push_topic_candidates.py
+    │   ├── topic_aggregate.py
+    │   ├── x_avatar_poll.py
+    │   └── x_kol_poll.py
+    ├── pipeline
+    │   └── is_memeable_topic.py
+    └── tasks.py
+
+63 directories, 193 files

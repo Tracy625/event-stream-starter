@@ -192,3 +192,10 @@ verify_cards:
 	fi
 	@echo "Verifying /cards/preview for EVENT_KEY=$(EVENT_KEY)..."
 	@python scripts/verify_cards_preview.py --event-key $(EVENT_KEY)
+
+# ----- Telegram Benchmark -----
+bench-telegram:
+	@N=$${N:-5}; TEXT=$${TEXT:-"bench from scripts/bench_telegram.py"}; INTERVAL=$${INTERVAL:-200}; \
+	echo "Benchmarking Telegram with N=$$N messages..."; \
+	docker compose -f infra/docker-compose.yml exec -T api sh -lc \
+		"python scripts/bench_telegram.py -n $$N --text \"$$TEXT\" --interval-ms $$INTERVAL"

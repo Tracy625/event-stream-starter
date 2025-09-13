@@ -58,6 +58,17 @@ services:
       TELEGRAM_MOCK_PATH: "/tmp/telegram_sandbox.jsonl"
       TELEGRAM_SANDBOX_CHAT_ID: "123456"
       TELEGRAM_BOT_TOKEN: ""     # 开发期置空，别去连真TG
+      
+      # Telegram config (Day20+21)
+      TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
+      TG_CHANNEL_ID: ${TG_CHANNEL_ID:-}
+      TG_RATE_LIMIT: ${TG_RATE_LIMIT:-20}
+      TG_TIMEOUT_SECS: ${TG_TIMEOUT_SECS:-6}
+      TG_SANDBOX: ${TG_SANDBOX:-}
+      TG_SANDBOX_CHANNEL_ID: ${TG_SANDBOX_CHANNEL_ID:-}
+      TG_SANDBOX_THREAD_ID: ${TG_SANDBOX_THREAD_ID:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis}
     ports:
       - "8000:8000"
     depends_on:
@@ -87,6 +98,17 @@ services:
       CELERY_BROKER_URL: ${REDIS_URL}
       CELERY_RESULT_BACKEND: ${REDIS_URL}
       PYTHONPATH: /app:/app/worker/src
+      
+      # Telegram config (Day20+21)
+      TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
+      TG_CHANNEL_ID: ${TG_CHANNEL_ID:-}
+      TG_RATE_LIMIT: ${TG_RATE_LIMIT:-20}
+      TG_TIMEOUT_SECS: ${TG_TIMEOUT_SECS:-6}
+      TG_SANDBOX: ${TG_SANDBOX:-}
+      TG_SANDBOX_CHANNEL_ID: ${TG_SANDBOX_CHANNEL_ID:-}
+      TG_SANDBOX_THREAD_ID: ${TG_SANDBOX_THREAD_ID:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis}
     restart: always
     command: sh -lc "celery -A worker.app worker --beat -l info --pool=solo"
     depends_on:

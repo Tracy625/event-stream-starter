@@ -4,30 +4,62 @@ import time
 import requests
 from pathlib import Path
 from typing import Dict, Any, Optional
+from datetime import datetime, timezone
 
 from api.metrics import log_json, timeit
 from api.cache import get_redis_client
+from api.core import metrics
+from api.core import tracing
 
 class TelegramNotifier:
     """Minimal Telegram notification service"""
     
     def __init__(self):
-        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        # Try both TG_BOT_TOKEN and TELEGRAM_BOT_TOKEN
+        self.bot_token = os.getenv("TG_BOT_TOKEN", "") or os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
         self.redis = get_redis_client()
-        self.timeout = 10  # seconds
+        self.timeout = int(os.getenv("TG_TIMEOUT_SECS", "6") or 6)
         
     def send_message(
         self,
         chat_id: str,
         text: str,
         parse_mode: str = "Markdown",
-        disable_notification: bool = False
+        disable_notification: bool = False,
+        **kwargs
     ) -> Dict[str, Any]:
         """
         Send message to Telegram chat
         Returns: {"success": bool, "message_id": str, "error": str}
         """
+        
+        # Get metrics
+        error_counter = metrics.counter("telegram_error_code_count", "Telegram error codes")
+        latency_hist = metrics.histogram("telegram_send_latency_ms", "Telegram send latency", 
+                                        [50, 100, 200, 500, 1000, 2000, 5000])
+        
+        # Start timing
+        start_time = time.time()
+        event_key = kwargs.get("event_key")
+        attempt = kwargs.get("attempt")
+        trace_id = tracing.get_trace_id()
+        
+        # Fallback: if no token from init, try getting from config
+        if not self.bot_token:
+            try:
+                from api.core.config import TelegramConfig
+                cfg = TelegramConfig.from_env()
+                self.bot_token = cfg.bot_token or ""
+                self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+            except Exception:
+                pass
+        
+        # Apply sandbox override if enabled
+        from api.core.config import TelegramConfig
+        cfg = TelegramConfig.from_env()
+        if cfg.sandbox and cfg.sandbox_channel_id:
+            chat_id = str(cfg.effective_channel_id())
         
         if not self.bot_token:
             log_json(
@@ -37,21 +69,44 @@ class TelegramNotifier:
             return {"success": False, "error": "Bot token not configured"}
         
         try:
-            # Rate limiting check
-            if self.redis:
-                rate_key = f"telegram:rate:{chat_id}"
-                rate_count = self.redis.incr(rate_key)
+            # Use new rate limiter with 1s window
+            from api.core.rate_limiter import allow_or_wait
+            
+            # Get effective channel ID as int
+            effective_channel = int(chat_id) if chat_id.lstrip("-").isdigit() else None
+            
+            # Check rate limit before sending
+            if not allow_or_wait(effective_channel, max_wait_ms=1000):
+                # Local rate limit hit
+                error_counter.inc({"code": "429"})
                 
-                if rate_count == 1:
-                    self.redis.expire(rate_key, 60)  # Reset every minute
+                # Structured log
+                log_entry = {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "evt": "telegram.send",
+                    "channel_id": chat_id,
+                    "event_key": event_key,
+                    "ok": False,
+                    "code": "429",
+                    "latency_ms": int((time.time() - start_time) * 1000),
+                    "attempt": attempt,
+                    "trace_id": trace_id
+                }
+                print(json.dumps(log_entry))
                 
-                if rate_count > 30:  # Max 30 messages per minute
-                    log_json(
-                        stage="telegram.ratelimit",
-                        chat_id=chat_id,
-                        count=rate_count
-                    )
-                    return {"success": False, "error": "Rate limit exceeded"}
+                log_json(
+                    stage="telegram.ratelimit",
+                    chat_id=chat_id,
+                    error="rate_limited"
+                )
+                
+                return {
+                    "success": False,
+                    "error": "rate_limited",
+                    "error_code": 429,
+                    "status_code": 429,
+                    "retry_after": 1
+                }
             
             # Prepare request
             url = f"{self.base_url}/sendMessage"
@@ -63,6 +118,10 @@ class TelegramNotifier:
                 "disable_notification": disable_notification
             }
             
+            # Add thread ID if sandbox mode specifies it
+            if cfg.sandbox and cfg.sandbox_thread_id:
+                payload["message_thread_id"] = cfg.sandbox_thread_id
+            
             # Send request
             response = requests.post(
                 url,
@@ -70,11 +129,33 @@ class TelegramNotifier:
                 timeout=self.timeout
             )
             
+            # Calculate latency
+            latency_ms = (time.time() - start_time) * 1000
+            latency_hist.observe(latency_ms)
+            
             # Parse response
             data = response.json()
+            status_code = response.status_code
             
             if data.get("ok"):
                 message_id = data["result"]["message_id"]
+                
+                # Record success
+                error_counter.inc({"code": "200"})
+                
+                # Structured log
+                log_entry = {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "evt": "telegram.send",
+                    "channel_id": chat_id,
+                    "event_key": event_key,
+                    "ok": True,
+                    "code": "200",
+                    "latency_ms": int(latency_ms),
+                    "attempt": attempt,
+                    "trace_id": trace_id
+                }
+                print(json.dumps(log_entry))
                 
                 log_json(
                     stage="telegram.sent",
@@ -89,38 +170,148 @@ class TelegramNotifier:
                 }
             else:
                 error = data.get("description", "Unknown error")
+                error_code = data.get("error_code")
+                
+                # Classify error code
+                if status_code == 429 or error_code == 429:
+                    code_label = "429"
+                elif 400 <= status_code < 500:
+                    code_label = "4xx"
+                elif status_code >= 500:
+                    code_label = "5xx"
+                else:
+                    code_label = "unknown"
+                
+                error_counter.inc({"code": code_label})
+                
+                # Structured log
+                log_entry = {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "evt": "telegram.send",
+                    "channel_id": chat_id,
+                    "event_key": event_key,
+                    "ok": False,
+                    "code": code_label,
+                    "latency_ms": int(latency_ms),
+                    "attempt": attempt,
+                    "trace_id": trace_id
+                }
+                print(json.dumps(log_entry))
                 
                 log_json(
                     stage="telegram.api_error",
                     chat_id=chat_id,
                     error=error,
-                    error_code=data.get("error_code")
+                    error_code=error_code
                 )
                 
-                return {"success": False, "error": error}
+                # Extract retry_after if present
+                retry_after = None
+                if data.get("parameters"):
+                    retry_after = data["parameters"].get("retry_after")
+                
+                return {
+                    "success": False,
+                    "error": error,
+                    "error_code": error_code,
+                    "status_code": status_code,
+                    "retry_after": retry_after
+                }
                 
         except requests.exceptions.Timeout:
+            latency_ms = (time.time() - start_time) * 1000
+            latency_hist.observe(latency_ms)
+            error_counter.inc({"code": "net"})
+            
+            # Structured log
+            log_entry = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "evt": "telegram.send",
+                "channel_id": chat_id,
+                "event_key": event_key,
+                "ok": False,
+                "code": "net",
+                "latency_ms": int(latency_ms),
+                "attempt": attempt,
+                "trace_id": trace_id
+            }
+            print(json.dumps(log_entry))
+            
             log_json(
                 stage="telegram.timeout",
                 chat_id=chat_id
             )
-            return {"success": False, "error": "Request timeout"}
+            return {
+                "success": False,
+                "error": "Request timeout",
+                "error_code": None,
+                "status_code": 0,
+                "retry_after": None
+            }
             
         except requests.exceptions.RequestException as e:
+            latency_ms = (time.time() - start_time) * 1000
+            latency_hist.observe(latency_ms)
+            error_counter.inc({"code": "net"})
+            
+            # Structured log
+            log_entry = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "evt": "telegram.send",
+                "channel_id": chat_id,
+                "event_key": event_key,
+                "ok": False,
+                "code": "net",
+                "latency_ms": int(latency_ms),
+                "attempt": attempt,
+                "trace_id": trace_id
+            }
+            print(json.dumps(log_entry))
+            
             log_json(
                 stage="telegram.request_error",
                 chat_id=chat_id,
                 error=str(e)
             )
-            return {"success": False, "error": f"Request failed: {str(e)}"}
+            return {
+                "success": False,
+                "error": f"Request failed: {str(e)}",
+                "error_code": None,
+                "status_code": 0,
+                "retry_after": None
+            }
             
         except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+            latency_hist.observe(latency_ms)
+            error_counter.inc({"code": "net"})
+            
+            # Structured log
+            log_entry = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "evt": "telegram.send",
+                "channel_id": chat_id,
+                "event_key": event_key,
+                "ok": False,
+                "code": "net",
+                "latency_ms": int(latency_ms),
+                "attempt": attempt,
+                "trace_id": trace_id
+            }
+            print(json.dumps(log_entry))
+            
             log_json(
                 stage="telegram.error",
                 chat_id=chat_id,
                 error=str(e)
             )
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "error": str(e),
+                "error_code": None,
+                "status_code": 0,
+                "retry_after": None
+            }
     
     def get_updates(self, offset: Optional[int] = None) -> Dict[str, Any]:
         """Get updates from Telegram (for testing)"""

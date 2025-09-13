@@ -7,11 +7,16 @@ Provides event key generation and upsert operations for event aggregation.
 import os
 import re
 import hashlib
+import unicodedata
+import json
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from sqlalchemy import create_engine, Table, MetaData, func, text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from api.metrics import log_json, timeit
+
+# Track if salt change warning has been shown
+_salt_warning_shown = False
 
 
 _events_tbl_cache = None
@@ -227,82 +232,386 @@ def _compute_candidate_score(post: Dict[str, Any], alpha: float = 0.6, beta: flo
     return max(0.0, min(1.0, score))
 
 
+def _normalize_text(text: str) -> str:
+    """
+    Normalize text for event key generation.
+    
+    Order: Unicode NFC → Remove URLs/@handles → Collapse spaces
+    Preserves #hashtags
+    """
+    if not text:
+        return ""
+    
+    # Lowercase
+    text = text.lower()
+    
+    # Unicode NFC normalization (first)
+    text = unicodedata.normalize('NFC', text)
+    
+    # Remove URLs (http/https/bare domains with punctuation)
+    text = re.sub(r'https?://[^\s]+', '', text)
+    text = re.sub(r'www\.[^\s]+', '', text)
+    text = re.sub(r'\b[a-zA-Z0-9][a-zA-Z0-9-]*\.(com|org|net|io|xyz|co|app|tech|ai|dev|finance|eth)[\s,\.!?;:]', ' ', text)
+    
+    # Remove @handles (but preserve #hashtags)
+    text = re.sub(r'@\w+', '', text)
+    
+    # Collapse multiple spaces (last)
+    text = re.sub(r'\s+', ' ', text)
+    
+    return text.strip()
+
+
 @timeit("events.make_key")
 def make_event_key(post: Dict[str, Any]) -> str:
     """
     Generate deterministic event key from post.
     
-    Format: {id_part}:{topic_hash}:{time_bucket}
+    Pure function that only depends on input and EVENT_KEY_SALT.
+    Format: sha256(type|symbol|token_ca|text_norm|bucket|salt)
     
     Args:
         post: Post dictionary with required fields:
+            - type: Event type (required)
             - token_ca: Optional contract address
-            - symbol: Optional token symbol
-            - keywords: List of keywords
+            - symbol: Optional token symbol  
+            - text: Optional text content
             - created_ts: Post timestamp (datetime)
     
     Returns:
-        Event key string
+        Event key string (40 hex chars)
     """
-    # Read environment variables at call time
+    # Read environment variables
+    salt = os.getenv("EVENT_KEY_SALT", "v1")
     bucket_sec = int(os.getenv("EVENT_TIME_BUCKET_SEC", "600"))
-    topk = int(os.getenv("EVENT_TOPIC_TOPK", "3"))
-    hash_algo = os.getenv("EVENT_HASH_ALGO", "blake2s")
     
-    # Extract ID part
-    id_part = _extract_id_part(post)
+    # Check for salt change warning (only log once)
+    global _salt_warning_shown
+    default_salt = "v1"
+    if salt != default_salt and not _salt_warning_shown:
+        log_json(
+            stage="pipeline.event.key",
+            event="salt_changed",
+            current_salt=salt,
+            default_salt=default_salt
+        )
+        _salt_warning_shown = True
     
-    # Extract and hash topic keywords
-    keywords_norm = _extract_topic_keywords(post, topk)
-    topic_hash = _compute_topic_hash(keywords_norm, hash_algo)
+    # Extract required fields (fail if missing critical fields)
+    event_type = post.get("type")
+    if not event_type:
+        raise ValueError("Event type is required for key generation")
+    
+    # Normalize components
+    type_norm = event_type.lower()
+    
+    # Symbol: strip edges then uppercase (preserves internal spaces)
+    symbol = post.get("symbol", "")
+    symbol_norm = symbol.strip().upper() if symbol else ""
+    
+    # Token CA: lowercase, validate 0x prefix and hex chars
+    token_ca = post.get("token_ca", "")
+    token_ca_norm = ""
+    if token_ca:
+        token_ca_lower = token_ca.lower()
+        if not token_ca_lower.startswith("0x"):
+            log_json(
+                stage="pipeline.event.key",
+                event="token_ca_warning",
+                message="Token CA missing 0x prefix",
+                token_ca=token_ca
+            )
+        elif not re.match(r'^0x[0-9a-f]+$', token_ca_lower):
+            log_json(
+                stage="pipeline.event.key",
+                event="token_ca_warning",
+                message="Token CA contains non-hex characters",
+                token_ca=token_ca
+            )
+        token_ca_norm = token_ca_lower
+    
+    # Text normalization
+    text = post.get("text", "")
+    text_norm = _normalize_text(text)
     
     # Calculate time bucket
     created_ts = post.get("created_ts")
     if not created_ts:
         created_ts = datetime.now(timezone.utc)
     elif isinstance(created_ts, str):
-        # Parse if string
         created_ts = datetime.fromisoformat(created_ts.replace("Z", "+00:00"))
     
     # Convert to timestamp and bucket
     ts_epoch = int(created_ts.timestamp())
-    bucket_start = (ts_epoch // bucket_sec) * bucket_sec
+    bucket = (ts_epoch // bucket_sec) * bucket_sec
     
-    # Build event key
-    event_key = f"{id_part}:{topic_hash}:{bucket_start}"
+    # Build preimage: type|symbol|token_ca|text_norm|bucket|salt
+    preimage = f"{type_norm}|{symbol_norm}|{token_ca_norm}|{text_norm}|{bucket}|{salt}"
+    
+    # Generate SHA256 hash (40 hex chars to match Day5 - hardcoded length)
+    hash_full = hashlib.sha256(preimage.encode()).hexdigest()
+    event_key = hash_full[:40]  # Fixed at 40 hex chars per Day5 spec
     
     # Log the key generation
     log_json(
-        "events.make_key",
+        stage="pipeline.event.key",
         event_key=event_key,
-        id_part=id_part,
-        topic_hash=topic_hash,
-        bucket_start=bucket_start,
-        keywords_count=len(keywords_norm)
+        type=type_norm,
+        symbol=symbol_norm,
+        token_ca=token_ca_norm,
+        bucket=bucket,
+        salt=salt
     )
     
     return event_key
 
 
-@timeit("events.upsert")
-def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _make_evidence_dedup_key(evidence: Dict[str, Any]) -> str:
     """
-    Upsert event to database based on post data.
+    Generate deduplication key for evidence.
     
-    Creates new event or updates existing one based on event_key.
+    Uses: sha1(source + sorted stable ref fields)
+    """
+    source = evidence.get("source", "")
+    ref = evidence.get("ref", {})
+    
+    # Sort ref fields for stable hashing
+    ref_sorted = json.dumps(ref, sort_keys=True)
+    
+    # Create dedup key
+    content = f"{source}|{ref_sorted}"
+    return hashlib.sha1(content.encode()).hexdigest()
+
+
+def _build_evidence_item(source: str, ts: datetime, ref: Dict[str, Any], 
+                         summary: Optional[str] = None, weight: Optional[float] = None) -> Dict[str, Any]:
+    """
+    Build a standardized evidence item.
+    
+    Schema:
+    {
+        "source": "x|dex|goplus",
+        "ts": "2025-09-10T08:22:11Z",
+        "ref": {tweet_id, url, chain_id, pool, tx, goplus_endpoint, key},
+        "summary": str|None,
+        "weight": float|None
+    }
+    """
+    evidence = {
+        "source": source,
+        "ts": ts.isoformat() if hasattr(ts, 'isoformat') else ts,
+        "ref": ref
+    }
+    
+    if summary is not None:
+        evidence["summary"] = summary
+    if weight is not None:
+        evidence["weight"] = weight
+        
+    return evidence
+
+
+def merge_event_by_key(event_key: str, payload: Dict[str, Any], strict: Optional[bool] = None) -> Dict[str, Any]:
+    """
+    Dry-run merge for event by key (no DB writes).
     
     Args:
-        post: Post dictionary with required fields:
-            - All fields required by make_event_key
-            - sentiment_label: Sentiment classification
-            - sentiment_score: Sentiment score [-1, 1]
-        goplus_data: Optional GoPlus security data to include
+        event_key: Event key to merge into
+        payload: New data to merge
+        strict: Whether to enforce strict mode (from ENV if not provided)
     
     Returns:
         Dictionary with:
-            - event_key: Generated event key
-            - evidence_count: Current evidence count
-            - candidate_score: Computed candidate score
+            - would_change: Whether merge would change the event
+            - delta_count: Number of new evidence items
+            - sources_candidate: Set of unique sources that would be merged
+    """
+    if strict is None:
+        # Parse EVENT_MERGE_STRICT as boolean (case insensitive)
+        strict_env = os.getenv("EVENT_MERGE_STRICT", "true").lower()
+        strict = strict_env in ("true", "1", "yes", "on")
+    
+    # Extract sources from payload
+    sources_candidate = set()
+    if "source" in payload:
+        sources_candidate.add(payload["source"])
+    if "sources" in payload and isinstance(payload["sources"], list):
+        sources_candidate.update(payload["sources"])
+    
+    # Count evidence items
+    delta_evidence_count = 0
+    if "evidence" in payload:
+        if isinstance(payload["evidence"], list):
+            delta_evidence_count = len(payload["evidence"])
+        elif isinstance(payload["evidence"], dict):
+            delta_evidence_count = 1
+    
+    # Determine if changes would occur (simplified for dry-run)
+    would_change = delta_evidence_count > 0 or len(sources_candidate) > 0
+    
+    # Log the merge attempt
+    log_json(
+        stage="pipeline.event.merge",
+        event_key=event_key,
+        strict=strict,
+        sources_candidate=list(sources_candidate),
+        delta_evidence_count=delta_evidence_count,
+        dry_run=True,
+        would_change=would_change
+    )
+    
+    return {
+        "would_change": would_change,
+        "delta_count": delta_evidence_count,
+        "sources_candidate": list(sources_candidate)  # Convert set to list for consistent output
+    }
+
+
+def merge_event_evidence(event_key: str, new_evidence: List[Dict[str, Any]], 
+                        existing_evidence: Optional[List[Dict[str, Any]]] = None,
+                        current_source: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Merge and deduplicate evidence for an event.
+    
+    Args:
+        event_key: Event key
+        new_evidence: New evidence items to merge
+        existing_evidence: Existing evidence from DB
+        current_source: Current source to filter on when strict=false
+    
+    Returns:
+        Dictionary with:
+            - merged_evidence: Deduplicated merged evidence list
+            - before_count: Count before merge
+            - after_count: Count after merge
+            - deduped: Number of duplicates removed
+    """
+    # Parse strict mode
+    strict_env = os.getenv("EVENT_MERGE_STRICT", "true").lower()
+    strict = strict_env in ("true", "1", "yes", "on")
+    
+    existing = existing_evidence or []
+    before_count = len(existing)
+    
+    # Determine current source if not provided
+    if not current_source and new_evidence:
+        sources_in_new = set(e.get("source") for e in new_evidence if e.get("source"))
+        if len(sources_in_new) == 1:
+            current_source = sources_in_new.pop()
+    
+    merge_scope = "cross_source" if strict else "single_source"
+    
+    if not strict:
+        # Loose mode: only keep evidence from current_source
+        merged = []
+        # Keep existing evidence from current source
+        if current_source:
+            merged = [e for e in existing if e.get("source") == current_source]
+            # Add new evidence from current source
+            merged.extend([e for e in new_evidence if e.get("source") == current_source])
+        else:
+            # No current source specified, just append new
+            merged = existing + new_evidence
+        
+        after_count = len(merged)
+        deduped = 0
+    else:
+        # Strict mode: merge and deduplicate across sources
+        seen_keys = set()
+        merged = []
+        
+        # Process existing evidence
+        for item in existing:
+            dedup_key = _make_evidence_dedup_key(item)
+            if dedup_key not in seen_keys:
+                seen_keys.add(dedup_key)
+                merged.append(item)
+        
+        # Process new evidence
+        for item in new_evidence:
+            dedup_key = _make_evidence_dedup_key(item)
+            if dedup_key not in seen_keys:
+                seen_keys.add(dedup_key)
+                merged.append(item)
+        
+        after_count = len(merged)
+        deduped = (before_count + len(new_evidence)) - after_count
+    
+    # Extract sources for logging
+    sources = set()
+    for item in merged:
+        if "source" in item:
+            sources.add(item["source"])
+    
+    # Log the merge
+    log_json(
+        stage="pipeline.event.evidence.merge",
+        event_key=event_key,
+        source=list(sources),
+        before_count=before_count,
+        after_count=after_count,
+        deduped=deduped,
+        strict=strict,
+        merge_scope=merge_scope
+    )
+    
+    return {
+        "merged_evidence": merged,
+        "before_count": before_count,
+        "after_count": after_count,
+        "deduped": deduped
+    }
+
+
+def upsert_event_with_evidence(*, event: Dict[str, Any], evidence: List[Dict[str, Any]], 
+                               strict: Optional[bool] = None, current_source: Optional[str] = None) -> Dict[str, Any]:
+    """
+    New entry point for upserting events with evidence.
+    
+    Args:
+        event: Event data dictionary
+        evidence: List of evidence items
+        strict: Override strict mode (None = use ENV)
+        current_source: Current source for single-source mode
+    
+    Returns:
+        Dictionary with event_key, evidence_count, candidate_score
+    """
+    # Generate event key
+    event_key = make_event_key(event)
+    
+    # TODO: Implement actual DB upsert with evidence merge
+    # For now, just return mock result
+    merge_result = merge_event_evidence(
+        event_key=event_key,
+        new_evidence=evidence,
+        existing_evidence=[],
+        current_source=current_source
+    )
+    
+    return {
+        "event_key": event_key,
+        "evidence_count": merge_result["after_count"],
+        "candidate_score": 0.5  # Mock score
+    }
+
+
+@timeit("events.upsert")
+def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = None,
+                 dex_data: Optional[Dict[str, Any]] = None, x_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Backward-compatible upsert event function.
+    
+    Legacy signature maintained for compatibility. New code should use upsert_event_with_evidence.
+    
+    Args:
+        post: Post dictionary with required fields
+        goplus_data: Optional GoPlus security data
+        dex_data: Optional DEX data
+        x_data: Optional X/Twitter data
+    
+    Returns:
+        Dictionary with event_key, evidence_count, candidate_score
     """
     # Generate event key
     event_key = make_event_key(post)
@@ -348,8 +657,49 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
     # Prepare keywords for JSONB
     keywords_jsonb = keywords_norm if keywords_norm else None
     
-    # Prepare GoPlus data for evidence
-    evidence_jsonb = {}
+    # Build evidence items from various sources
+    new_evidence = []
+    current_ts = datetime.now(timezone.utc)
+    
+    # X/Twitter evidence
+    if x_data:
+        x_ref = {}
+        if "tweet_id" in x_data:
+            x_ref["tweet_id"] = x_data["tweet_id"]
+        if "url" in x_data:
+            x_ref["url"] = x_data["url"]
+        if "author" in x_data:
+            x_ref["author"] = x_data["author"]
+            
+        x_evidence = _build_evidence_item(
+            source="x",
+            ts=x_data.get("ts", current_ts),
+            ref=x_ref,
+            summary=x_data.get("text", "")[:100] if "text" in x_data else None,
+            weight=x_data.get("weight", 1.0)
+        )
+        new_evidence.append(x_evidence)
+    
+    # DEX evidence  
+    if dex_data:
+        dex_ref = {}
+        if "chain_id" in dex_data:
+            dex_ref["chain_id"] = dex_data["chain_id"]
+        if "pool" in dex_data:
+            dex_ref["pool"] = dex_data["pool"]
+        if "tx" in dex_data:
+            dex_ref["tx"] = dex_data["tx"]
+            
+        dex_evidence = _build_evidence_item(
+            source="dex",
+            ts=dex_data.get("ts", current_ts),
+            ref=dex_ref,
+            summary=f"Price: ${dex_data.get('price_usd', 0):.4f}" if "price_usd" in dex_data else None,
+            weight=dex_data.get("weight", 1.0)
+        )
+        new_evidence.append(dex_evidence)
+    
+    # GoPlus evidence
     goplus_risk = None
     buy_tax = None
     sell_tax = None
@@ -357,22 +707,33 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
     honeypot = None
     
     if goplus_data:
-        # Extract GoPlus fields
+        # Extract GoPlus fields for columns
         goplus_risk = goplus_data.get("risk_label")
         buy_tax = goplus_data.get("buy_tax")
         sell_tax = goplus_data.get("sell_tax")
         lp_lock_days = goplus_data.get("lp_lock_days")
         honeypot = goplus_data.get("honeypot")
         
-        # Add to evidence
-        evidence_jsonb["goplus_raw"] = {
-            "risk_label": goplus_risk,
-            "buy_tax": buy_tax,
-            "sell_tax": sell_tax,
-            "lp_lock_days": lp_lock_days,
-            "honeypot": honeypot,
-            "checked_at": datetime.now(timezone.utc).isoformat()
-        }
+        # Build evidence item
+        goplus_ref = {}
+        if "goplus_endpoint" in goplus_data:
+            goplus_ref["goplus_endpoint"] = goplus_data["goplus_endpoint"]
+        if "chain_id" in goplus_data:
+            goplus_ref["chain_id"] = goplus_data["chain_id"]
+        if token_ca:
+            goplus_ref["address"] = token_ca
+            
+        goplus_evidence = _build_evidence_item(
+            source="goplus",
+            ts=goplus_data.get("ts", current_ts),
+            ref=goplus_ref,
+            summary=f"Risk: {goplus_risk}" if goplus_risk else None,
+            weight=goplus_data.get("weight", 1.0)
+        )
+        new_evidence.append(goplus_evidence)
+    
+    # Prepare evidence JSONB (now as array)
+    evidence_jsonb = new_evidence if new_evidence else None
     
     # Get engine and reflect table
     postgres_url = os.getenv("POSTGRES_URL")
@@ -382,7 +743,7 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
     
     events = _events_table(engine)
     
-    # Build insert statement with GoPlus fields
+    # Build insert statement with evidence and GoPlus fields
     ins = pg_insert(events).values(
         event_key=event_key,
         symbol=symbol,
@@ -391,7 +752,7 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
         time_bucket_start=time_bucket_start,
         start_ts=created_ts,
         last_ts=created_ts,
-        evidence_count=1,
+        evidence_count=len(new_evidence) if new_evidence else 1,
         candidate_score=candidate_score,
         keywords_norm=keywords_jsonb,
         version=version,
@@ -402,15 +763,20 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
         sell_tax=sell_tax,
         lp_lock_days=lp_lock_days,
         honeypot=honeypot,
-        evidence=evidence_jsonb if evidence_jsonb else None
+        evidence=evidence_jsonb
     )
     
-    # Build upsert statement with ON CONFLICT
+    # Build upsert statement with ON CONFLICT - now handles evidence array merge
+    # Note: This is a simplified version. In production, we'd need to fetch existing
+    # evidence and use merge_event_evidence() for proper deduplication
     stmt = ins.on_conflict_do_update(
         index_elements=[events.c.event_key],
         set_={
             "last_ts": func.greatest(events.c.last_ts, ins.excluded.last_ts),
-            "evidence_count": events.c.evidence_count + 1,
+            "evidence_count": sa_text(
+                "CASE WHEN events.evidence IS NULL THEN COALESCE(array_length(excluded.evidence::json[], 1), 1) "
+                "ELSE events.evidence_count + COALESCE(array_length(excluded.evidence::json[], 1), 1) END"
+            ),
             "last_sentiment": ins.excluded.last_sentiment,
             "last_sentiment_score": ins.excluded.last_sentiment_score,
             "candidate_score": ins.excluded.candidate_score,
@@ -419,8 +785,12 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
             "sell_tax": ins.excluded.sell_tax,
             "lp_lock_days": ins.excluded.lp_lock_days,
             "honeypot": ins.excluded.honeypot,
-            # Merge evidence JSONB (append, don't overwrite)
-            "evidence": func.coalesce(events.c.evidence, sa_text("'{}'::jsonb")) + func.coalesce(ins.excluded.evidence, sa_text("'{}'::jsonb"))
+            # Merge evidence arrays (concat, dedup happens in app layer)
+            "evidence": sa_text(
+                "CASE WHEN events.evidence IS NULL THEN excluded.evidence "
+                "WHEN excluded.evidence IS NULL THEN events.evidence "
+                "ELSE events.evidence || excluded.evidence END"
+            )
         }
     )
     

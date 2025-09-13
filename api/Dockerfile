@@ -30,6 +30,8 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # 仅在依赖安装成功后再复制源代码，避免无谓重建
 COPY api /app/api
+COPY scripts /app/scripts
+COPY data /app/data
 
 
 # 为了让 Uvicorn 在容器里更稳（不必须）

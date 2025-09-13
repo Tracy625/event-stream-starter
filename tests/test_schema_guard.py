@@ -95,7 +95,7 @@ def test_signals_table_required_columns():
 
 def test_api_graceful_degradation():
     """Test that API degrades gracefully when features are missing."""
-    from api.routes_signals import get_signal_summary
+    from api.routes.signals_summary import get_signal_summary
     
     mock_db = Mock()
     mock_redis = Mock()
@@ -128,7 +128,7 @@ def test_api_graceful_degradation():
 
 def test_redis_connection_resilience():
     """Test that API continues working when Redis is down."""
-    from api.routes_signals import get_signal_summary
+    from api.routes.signals_summary import get_signal_summary
     
     mock_db = Mock()
     mock_redis = Mock()
@@ -163,7 +163,7 @@ def test_redis_connection_resilience():
 def test_utc_timestamp_format():
     """Test that timestamps are properly formatted as UTC with Z suffix."""
     from datetime import datetime, timezone
-    from api.routes_signals import serialize_datetime
+    from api.routes.signals_summary import serialize_datetime
     
     # Test various datetime inputs
     test_cases = [
@@ -186,7 +186,7 @@ def test_utc_timestamp_format():
 def test_decimal_precision():
     """Test that numeric values have exactly 3 decimal places."""
     from decimal import Decimal
-    from api.routes_signals import serialize_decimal
+    from api.routes.signals_summary import serialize_decimal
     
     test_cases = [
         (Decimal("0.1234567"), 0.123),
