@@ -1675,3 +1675,75 @@ CARDS_SUMMARY_TIMEOUT_MS=1 EVENT_KEY=TEST_BAD make verify_cards
   • event*key 必须大写匹配模式 ^[A-Z0-9:*\-\.]{8,128}$。
   • 降级模式下 meta.summary_backend="template"，summary/risk_note 仍保证非空。
   • Rollback：删除 schemas/cards.schema.json、api/cards/\*、api/routes/cards.py 以及 scripts/verify_cards_preview.py 的新增内容。
+
+================================================================
+
+## Pre Day20+21 — Telegram Notifier & Outbox 基础设施 (2025-09-13)
+
+### 已完成覆盖
+
+- `/cards/send` 路由：支持 count 批量、dry_run、Redis 去重（1h 窗口），失败项入 push_outbox。
+- Outbox 重试作业：429 按 retry_after，5xx/网络错误指数退避+抖动，4xx→DLQ；Celery Beat 每 20 秒调度。
+- 最小速率限制：Redis 秒级窗口 (global + per-channel)，实测限流有效。
+- Metrics 绑定：`telegram_send_latency_ms`、`telegram_error_code_count{code}`、`outbox_backlog`、`pipeline_latency_ms`。
+
+### 待完成差距
+
+- 同步降级：失败时写 `/tmp/cards/*.json`，响应体增加 `degrade=true`。
+- 幂等键增强：加入 `template_v`，避免重试/模板切换重复。
+- 新增指标：`external_error_rate`、`degrade_ratio`。
+- Bench-pipeline 脚本：50 事件批量，统计 P50/P95/失败率/降级率。
+- RUN_NOTES 文档：补充指标查看与常见问题说明。
+
+### 验收命令
+
+- **同步降级测试**
+
+  ```bash
+  # 设置错误 token 模拟失败
+  docker compose -f infra/docker-compose.yml exec -T -e TG_BOT_TOKEN=bad api \
+    curl -s -XPOST "http://localhost:8000/cards/send?event_key=ERR1&count=2" | jq .
+  # 预期：HTTP 200，响应包含 degrade=true；/tmp/cards/ 下生成 JSON；DB push_outbox 有 pending。
+  ```
+
+- **幂等键测试**
+
+  ```bash
+  # 相同 event_key/channel/template_v 请求
+  curl -s -XPOST "http://localhost:8000/cards/send?event_key=IDEMP1&count=1" | jq .
+  curl -s -XPOST "http://localhost:8000/cards/send?event_key=IDEMP1&count=1" | jq .
+  # 预期：第二次 dedup=true, sent=0
+  ```
+
+- **指标导出**
+
+  ```bash
+  curl -s http://localhost:8000/metrics | egrep "telegram|outbox|degrade"
+  ```
+
+- **Outbox 验证**
+
+  ```bash
+  # 手动触发重试作业
+  docker compose -f infra/docker-compose.yml exec -T worker python -m worker.jobs.outbox_retry
+  # 查看 DB 状态
+  docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c \
+    "SELECT id,event_key,status,attempt,last_error FROM push_outbox ORDER BY id DESC LIMIT 5;"
+  ```
+
+- **bench-pipeline 脚本（待实现）**
+
+  ```bash
+  make bench-pipeline
+  # 预期输出：P50/P95、失败率、降级率
+  ```
+
+- **日志与错误速查**
+  ```bash
+  # 观察发送日志
+  docker compose -f infra/docker-compose.yml logs api | egrep "telegram.send|telegram.sent|telegram.error"
+  # 常见错误：
+  # - 400 BAD_REQUEST → DLQ
+  # - 429 Too Many Requests → retry_after 重试
+  # - 5xx/网络 → 指数退避
+  ```

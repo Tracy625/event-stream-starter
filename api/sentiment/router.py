@@ -2,6 +2,30 @@ import os
 import json
 from typing import Tuple
 
+# === FastAPI router (added for HTTP exposure) ===
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+router = APIRouter(prefix="/sentiment", tags=["sentiment"])
+
+class _SentimentIn(BaseModel):
+    text: str
+
+@router.get("")
+def sentiment_get(text: str):
+    """
+    Back-compat: GET /sentiment?text=...
+    """
+    label, score = analyze(text)  # 使用你现有的 analyze()
+    return {"label": label, "score": score}
+
+@router.post("/analyze")
+def sentiment_post(body: _SentimentIn):
+    """
+    JSON body: {"text": "..."}
+    """
+    label, score = analyze(body.text)
+    return {"label": label, "score": score}
 
 def log_json(stage: str, **kv) -> None:
     kv["stage"] = stage
@@ -32,4 +56,4 @@ def analyze(text: str) -> Tuple[str, float]:
         return analyze_rules(text)
 
 
-__all__ = ["analyze"]
+__all__ = ["analyze", "router"]

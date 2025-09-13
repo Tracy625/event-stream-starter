@@ -1,5 +1,6 @@
 from .app import app
 from .jobs.onchain.verify_signal import run_once as verify_signals_once
+from .jobs.outbox_retry import scheduled_process
 from celery.schedules import crontab
 import json
 
@@ -33,6 +34,14 @@ def onchain_verify_periodic():
             "ok": False
         }))
         raise
+
+@app.task(name="outbox.process_batch")
+def outbox_process_batch():
+    """
+    Celery 任务壳：调用 outbox 重试批处理
+    最小改动，不引入新依赖，不改变启动命令
+    """
+    return scheduled_process()
 
 # Celery Beat schedule configuration
 app.conf.beat_schedule = {

@@ -1,0 +1,101 @@
+version: "1.0"
+
+groups:
+  - name: "goplus_safety"
+    priority: 10
+    rules:
+      - condition: "goplus_risk == 'red'"
+        score: -10
+        reason: "高风险代币（GoPlus Red）"
+      - condition: "goplus_risk == 'yellow'"
+        score: -5
+        reason: "中等风险代币（GoPlus Yellow）"
+      - condition: "goplus_risk == 'green'"
+        score: 3
+        reason: "安全验证通过（GoPlus Green）"
+      - condition: "buy_tax > 10"
+        score: -8
+        reason: "买入税率过高（>10%）"
+      - condition: "sell_tax > 10"
+        score: -8
+        reason: "卖出税率过高（>10%）"
+      - condition: "lp_lock_days < 30"
+        score: -3
+        reason: "流动性锁定期过短（<30天）"
+      - condition: "lp_lock_days >= 180"
+        score: 5
+        reason: "流动性锁定充足（≥180天）"
+
+  - name: "dex_activity"
+    priority: 8
+    rules:
+      - condition: "dex_liquidity < ${THETA_LIQ:50000}"
+        score: -5
+        reason: "流动性不足（<$${THETA_LIQ:50000}）"
+      - condition: "dex_liquidity >= ${THETA_LIQ:50000} and dex_liquidity < 500000"
+        score: 2
+        reason: "流动性适中"
+      - condition: "dex_liquidity >= 500000"
+        score: 8
+        reason: "流动性充足（≥$500K）"
+      - condition: "dex_volume_1h < ${THETA_VOL:10000}"
+        score: -3
+        reason: "交易量过低（1h <$${THETA_VOL:10000}）"
+      - condition: "dex_volume_1h >= ${THETA_VOL:10000} and dex_volume_1h < 100000"
+        score: 3
+        reason: "交易活跃"
+      - condition: "dex_volume_1h >= 100000"
+        score: 10
+        reason: "交易量爆发（1h ≥$100K）"
+
+  - name: "sentiment"
+    priority: 6
+    rules:
+      - condition: "last_sentiment_score < ${THETA_SENT:0.3}"
+        score: -4
+        reason: "社区情绪低迷（<${THETA_SENT:0.3}）"
+      - condition: "last_sentiment_score >= ${THETA_SENT:0.3} and last_sentiment_score < 0.7"
+        score: 2
+        reason: "社区情绪中性"
+      - condition: "last_sentiment_score >= 0.7"
+        score: 6
+        reason: "社区情绪高涨（≥0.7）"
+
+  - name: "heat_trend"
+    priority: 5
+    rules:
+      - condition: "heat_slope < 0"
+        score: -2
+        reason: "热度下降"
+      - condition: "heat_slope > 0 and heat_slope < 1"
+        score: 2
+        reason: "热度缓慢上升"
+      - condition: "heat_slope >= 1"
+        score: 5
+        reason: "热度快速攀升"
+
+scoring:
+  thresholds:
+    opportunity: 15
+    caution: -5
+  levels:
+    - name: "opportunity"
+      display: "opportunity"
+      description: "强信号，值得关注"
+    - name: "observe"
+      display: "observe"
+      description: "中性，继续观察"
+    - name: "caution"
+      display: "caution"
+      description: "风险信号，谨慎"
+
+missing_map:
+  dex:
+    condition: "dex_liquidity is null and dex_volume_1h is null"
+    reason: "DEX 数据不足"
+  hf:
+    condition: "last_sentiment_score is null"
+    reason: "情绪分析不可用"
+  goplus:
+    condition: "goplus_risk is null"
+    reason: "安全扫描未完成"

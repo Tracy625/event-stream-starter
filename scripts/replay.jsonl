@@ -1,0 +1,5 @@
+{"type": "token_launch", "symbol": "PEPE", "token_ca": "0x6982508145454ce325ddbe47a25d4ec3d2311933", "text": "PEPE token launched on Ethereum! #memecoin @vitalik https://etherscan.io", "created_ts": "2025-09-10T01:00:00Z", "source": "x", "tweet_id": "tweet_001", "author": "whale_alert"}
+{"type": "token_pump", "symbol": "SHIB", "token_ca": "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce", "text": "SHIB is pumping hard! 🚀 Buy now", "created_ts": "2025-09-10T01:30:00Z", "has_x_data": true, "tweet_id": "tweet_002"}
+{"type": "dex_listing", "symbol": "DOGE", "token_ca": "0xba2ae424d960c26247dd6c32edc70b295c744c43", "text": "DOGE listed on new DEX", "created_ts": "2025-09-10T02:00:00Z", "source": "x", "tweet_id": "tweet_003"}
+{"type": "rug_warning", "symbol": "SCAM", "text": "Warning: SCAM token might be a rug", "created_ts": "2025-09-10T02:30:00Z", "source": "x", "tweet_id": "tweet_004"}
+{"type": "token_launch", "symbol": "BONK", "token_ca": "0x1151cb3d861920e07a38e03eead12c32178567f6", "text": "New BONK token on BSC", "created_ts": "2025-09-10T03:00:00Z", "has_x_data": true}

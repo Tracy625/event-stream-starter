@@ -444,6 +444,12 @@
   - 单次调用：`curl -s "http://localhost:8000/rules/eval?event_key=eth:DEMO1:2025-09-10T10:00:00Z" | jq '{level,score,reasons,all_reasons,meta}'`
   - 查看日志：`docker compose -f infra/docker-compose.yml logs -f api | rg 'rules\\.(eval|reloaded|reload_error|refine_degrade)'`
 
-## Today
+- Day19: Internal Cards Schema + Summarizer + Builder + Preview + Verify (verified)
+  - scope: 已新增内部卡片契约 `schemas/cards.schema.json`（Draft-07），约束 `data.{goplus,dex,onchain}`、`rules.*`、`evidence[]`、`summary`、`risk_note`、`rendered?`、`meta.*`。成功实现 `api/cards/build.py` 组装器，输入 `event_key` 合流 `events+signals(+onchain)` 并产出符合 schema 的对象。`api/cards/summarizer.py` 受限摘要器已上线，支持超时降级为模板摘要。`GET /cards/preview?event_key=...&render=1` 路由返回卡片 JSON（含可选 rendered.tg/ui），一键校验脚本 `scripts/verify_cards_preview.py` 与 `make verify_cards` 均通过。(verified)
+  - env: 已通过 `CARDS_SUMMARY_BACKEND=llm|template`（默认 llm）、`CARDS_SUMMARY_TIMEOUT_MS=1200`、`CARDS_SUMMARY_MAX_CHARS=280`、`CARDS_RISKNOTE_MAX_CHARS=160` 环境变量配置，均按预期工作。(verified)
+  - acceptance: `curl -s "/cards/preview?event_key=...&render=1"` 返回 200，且所有响应通过 `schemas/cards.schema.json` 校验。响应包含 `data.goplus.*` 与 `data.dex.*` 核心字段，`summary` 与 `risk_note` 均非空且未超限。将 `CARDS_SUMMARY_TIMEOUT_MS=1` 后再请求，`meta.summary_backend="template"` 且内容可读，降级路径符合预期。(verified)
+  - out_of_scope: `/cards/send` 推送与重试队列（已留待 Day20）；未包含新规则与新数据源的引入。(verified)
+
+## today
 
 ### acceptance

@@ -237,3 +237,7 @@ make demo 2>&1 | grep -E "t_total_ms"
 5. 验收检查：
    - 随机样本 ≥80% 返回合法 JSON。
    - 平均延迟 < 预算。
+
+### Day19 摘要器
+
+`summarize_card(payload)` 仅产两短文本；默认走 LLM，失败或 `CARDS_SUMMARY_BACKEND=template` 时自动模板降级；任何情况下输出均为单行、受长度约束、无修辞。

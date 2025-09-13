@@ -497,3 +497,83 @@ ALTER TABLE signals ADD COLUMN onchain_confidence NUMERIC(4,3);
 ### 校验要求
 
 所有生成的卡片必须通过 schemas/cards.schema.json 校验，失败则抛出ValueError
+
+---
+
+## 缓存键约定 (Cache Key Convention)
+
+**版本**: Day20+21  
+**更新日期**: 2025-09-13
+
+| Key Pattern | 作用 | TTL | 备注 |
+|------------|------|-----|------|
+| rate:tg:{bucket} | Telegram限流控制 | 2s | bucket可为`global`或`channel:{id}` |
+| cards:sent:{event_key}:{yyyyMMddHH} | 卡片去重追踪 | 5400s (1.5h) | 按小时分桶避免key过期不一致 |
+
+---
+
+## Outbox 表结构与索引（Day20+21）
+
+**版本**: Day20+21  
+**更新日期**: 2025-09-13
+
+### push_outbox 表
+
+| 字段 | 类型 | 约束 | 说明 |
+|-----|------|------|------|
+| id | BIGSERIAL | PRIMARY KEY | 主键 |
+| channel_id | BIGINT | NOT NULL | Telegram频道ID |
+| thread_id | BIGINT | NULL | Telegram线程ID（可选） |
+| event_key | VARCHAR(128) | NOT NULL | 事件键 |
+| payload_json | JSONB | NOT NULL | 消息载荷 |
+| status | VARCHAR(16) | NOT NULL CHECK | 状态：pending/retry/done/dlq |
+| attempt | INT | NOT NULL DEFAULT 0 | 重试次数 |
+| next_try_at | TIMESTAMPTZ | NULL | 下次重试时间 |
+| last_error | TEXT | NULL | 最后错误信息 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 创建时间 |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 更新时间 |
+
+### 索引
+
+| 索引名 | 字段 | 用途 |
+|--------|------|------|
+| ix_push_outbox_status_next_try_at | (status, next_try_at) | 批量拉取待处理消息 |
+| ix_push_outbox_event_key | event_key | 按事件键查询 |
+| ix_push_outbox_channel_id | channel_id | 按频道查询 |
+
+### 状态说明
+
+- **pending**: 新入队，等待首次发送
+- **retry**: 发送失败，等待重试
+- **done**: 发送成功
+- **dlq**: 死信队列，超过最大重试次数
+
+### push_outbox_dlq 表（归档表）
+
+| 字段 | 类型 | 约束 | 说明 |
+|-----|------|------|------|
+| id | BIGSERIAL | PRIMARY KEY | 主键 |
+| ref_id | BIGINT | NOT NULL | 引用push_outbox.id |
+| snapshot | JSONB | NOT NULL | 完整行快照 |
+| failed_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 失败时间 |
+
+### 典型查询
+
+```sql
+-- 拉取待处理消息
+SELECT * FROM push_outbox 
+WHERE status IN ('pending', 'retry') 
+  AND (next_try_at IS NULL OR next_try_at <= NOW())
+ORDER BY next_try_at NULLS FIRST, created_at ASC
+LIMIT 50;
+
+-- 查询某事件的推送状态
+SELECT * FROM push_outbox 
+WHERE event_key = 'EVENT_KEY'
+ORDER BY created_at DESC;
+
+-- 统计各状态消息数
+SELECT status, COUNT(*) 
+FROM push_outbox 
+GROUP BY status;
+```
