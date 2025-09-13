@@ -1747,3 +1747,165 @@ CARDS_SUMMARY_TIMEOUT_MS=1 EVENT_KEY=TEST_BAD make verify_cards
   # - 429 Too Many Requests → retry_after 重试
   # - 5xx/网络 → 指数退避
   ```
+
+================================================================
+
+### Cards 发送与降级运维指南（Day20+Day21）
+
+#### 指标查看
+
+- 导出全文指标
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python - <<PY
+  from api.core.metrics import export_text
+  print(export_text())
+  PY'
+
+- 精确查看降级批次数
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python - <<PY
+  from api.core.metrics import export_text
+  for line in export_text().splitlines():
+  if "cards_degrade_count" in line:
+  print(line)
+  PY'
+
+- 关注指标：
+
+- `telegram_send_latency_ms`：发送延迟
+- `telegram_error_code_count{code}`：错误码计数
+- `outbox_backlog`：积压情况
+- `pipeline_latency_ms`：链路总延迟
+- `cards_degrade_count`：降级批次数
+
+#### 日志定位
+
+# 查看最近日志
+
+- docker compose -f infra/docker-compose.yml logs --tail=100 api
+- docker compose -f infra/docker-compose.yml logs --tail=100 worker
+
+常见日志关键词：
+
+- `telegram.send` / `telegram.sent`
+- `telegram.timeout`
+- `telegram.error`
+- `outbox.process_batch`
+
+#### 429 自救
+
+出现 429 错误时：
+
+- 检查 `TG_RATE_LIMIT` 配置
+- 暂时降低并发或切换 `TG_SANDBOX`
+- 重启 worker 重试
+
+  docker compose -f infra/docker-compose.yml restart worker
+
+#### 降级快照核查
+
+- 查看最近快照文件
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc 'ls -lt /tmp/cards | head -n 5'
+
+- 查看最新快照内容
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python - <<PY
+  import os, json, glob
+  files = sorted(glob.glob("/tmp/cards/\*.json"), key=os.path.getmtime, reverse=True)[:1]
+  print(json.dumps(json.load(open(files[0], encoding="utf-8")), indent=2, ensure_ascii=False))
+  PY'
+
+- 快速验证命令
+
+- 模拟失败触发降级（坏 token 或断网）
+  curl -sS -XPOST "http://localhost:8000/cards/send?event*key=E_TEST*$(date +%s)&count=1&dry_run=0" | jq
+
+- 验证计数器自增
+  docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python - <<PY
+  from api.core.metrics import export_text
+  for line in export_text().splitlines():
+  if "cards_degrade_count" in line:
+  print(line)
+  PY'
+
+### Card A — 失败快照与批次降级标志（Day20）
+
+#### 验收命令
+
+```bash
+# 模拟错误触发快照与降级标志
+curl -sS -XPOST "http://localhost:8000/cards/send?event_key=E_ERR_$(date +%s)&count=1&dry_run=0" | jq
+
+# 查看最近快照文件
+docker compose -f infra/docker-compose.yml exec -T api sh -lc 'ls -lt /tmp/cards | head -n 3'
+
+# 查看最新快照内容
+docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python - <<PY
+import os, json, glob
+files = sorted(glob.glob("/tmp/cards/*.json"), key=os.path.getmtime, reverse=True)[:1]
+print(json.dumps(json.load(open(files[0], encoding="utf-8")), indent=2, ensure_ascii=False))
+PY'
+```
+
+---
+
+### Card B — 降级批次数指标（Day20）
+
+#### 验收命令
+
+```bash
+# 导出全文指标，确认出现 cards_degrade_count
+docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python - <<PY
+from api.core.metrics import export_text
+print(export_text())
+PY' | grep "cards_degrade_count" || true
+```
+
+---
+
+### Card D — 幂等键增强（Day20）
+
+#### 验收命令
+
+```bash
+# 同一 event_key + channel_id + template_v=v1，首次发送
+curl -sS -XPOST "http://localhost:8000/cards/send?event_key=E_IDEMP&count=1&template_v=v1&dry_run=0" | jq
+
+# 再次发送相同参数，预期 dedup=true
+curl -sS -XPOST "http://localhost:8000/cards/send?event_key=E_IDEMP&count=1&template_v=v1&dry_run=0" | jq
+
+# 更换 template_v，仍可发送
+curl -sS -XPOST "http://localhost:8000/cards/send?event_key=E_IDEMP&count=1&template_v=v2&dry_run=0" | jq
+
+# 在 Redis 查看幂等键
+docker compose -f infra/docker-compose.yml exec -T redis redis-cli --scan --pattern 'cards:idemp:*' | head
+```
+
+---
+
+### Card E — 外呼错误占位指标（三段式）（Day20）
+
+#### 验收命令
+
+```bash
+# 模拟触发 429 错误
+docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python - <<PY
+from api.routes import cards_send
+cards_send.EXTERNAL_ERR_429.inc()
+from api.core.metrics import export_text
+print([l for l in export_text().splitlines() if "external_error_total_429" in l])
+PY'
+
+# 模拟触发 5xx 错误
+docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python - <<PY
+from api.routes import cards_send
+cards_send.EXTERNAL_ERR_5XX.inc()
+from api.core.metrics import export_text
+print([l for l in export_text().splitlines() if "external_error_total_5xx" in l])
+PY'
+
+# 模拟触发网络错误
+docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python - <<PY
+from api.routes import cards_send
+cards_send.EXTERNAL_ERR_NET.inc()
+from api.core.metrics import export_text
+print([l for l in export_text().splitlines() if "external_error_total_net" in l])
+PY'
+```

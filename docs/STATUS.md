@@ -445,11 +445,49 @@
   - 查看日志：`docker compose -f infra/docker-compose.yml logs -f api | rg 'rules\\.(eval|reloaded|reload_error|refine_degrade)'`
 
 - Day19: Internal Cards Schema + Summarizer + Builder + Preview + Verify (verified)
+
   - scope: 已新增内部卡片契约 `schemas/cards.schema.json`（Draft-07），约束 `data.{goplus,dex,onchain}`、`rules.*`、`evidence[]`、`summary`、`risk_note`、`rendered?`、`meta.*`。成功实现 `api/cards/build.py` 组装器，输入 `event_key` 合流 `events+signals(+onchain)` 并产出符合 schema 的对象。`api/cards/summarizer.py` 受限摘要器已上线，支持超时降级为模板摘要。`GET /cards/preview?event_key=...&render=1` 路由返回卡片 JSON（含可选 rendered.tg/ui），一键校验脚本 `scripts/verify_cards_preview.py` 与 `make verify_cards` 均通过。(verified)
   - env: 已通过 `CARDS_SUMMARY_BACKEND=llm|template`（默认 llm）、`CARDS_SUMMARY_TIMEOUT_MS=1200`、`CARDS_SUMMARY_MAX_CHARS=280`、`CARDS_RISKNOTE_MAX_CHARS=160` 环境变量配置，均按预期工作。(verified)
   - acceptance: `curl -s "/cards/preview?event_key=...&render=1"` 返回 200，且所有响应通过 `schemas/cards.schema.json` 校验。响应包含 `data.goplus.*` 与 `data.dex.*` 核心字段，`summary` 与 `risk_note` 均非空且未超限。将 `CARDS_SUMMARY_TIMEOUT_MS=1` 后再请求，`meta.summary_backend="template"` 且内容可读，降级路径符合预期。(verified)
   - out_of_scope: `/cards/send` 推送与重试队列（已留待 Day20）；未包含新规则与新数据源的引入。(verified)
 
-## today
+- Pre Day20+Day21：发送链路加固（三件套）（verified)
 
-### acceptance
+  - 路由 `/cards/send` 已挂载：支持 `count` 批量、`dry_run`、Redis 去重（1h 窗口），沙盒覆盖（`TG_SANDBOX`），失败项入库 `push_outbox`，返回明细结构稳定。
+  - Outbox 重试作业：429 读取 `retry_after`；5xx/网络错误指数退避（含抖动，封顶 10 分钟）；4xx（非 429）→ DLQ；Celery beat 每 20 秒调度，已在日志中观察到 pending→done 的补发闭环。
+  - 最小速率限制：Redis 秒级二元窗（global + per-channel），请求前 `allow_or_wait()` 拦截；本地 429 快速失败由 Outbox 兜底；在 `TG_RATE_LIMIT=2` 压测下，worker 平滑外发、无 429 淹没。
+  - 指标与日志绑定：`telegram_send_latency_ms`、`telegram_error_code_count{code}`、`outbox_backlog`、`pipeline_latency_ms`；`export_text()` 验证通过，API/Worker 均有结构化日志（`telegram.send/sent/timeout`、`outbox.process_batch`）。
+  - 验收记录：`/cards/send?event_key=E_REAL3&count=5` 实发 5 条；`bench_telegram.py` 在限流=2 时输出均衡；手工插入 `push_outbox` 后由 worker 补发成功。
+
+- Day20+21: Cards 运维增强（完成）
+
+  - Card B：失败快照（已完成）
+
+    - 失败分支写入 push_outbox.snapshots，含 request/response/error 三元组；便于复盘。
+    - 降级路径：写盘失败不阻断流程，仅日志告警。
+    - 验收：curl 触发失败后，Redis/DB 中可见 snapshot 记录，字段完整。
+
+  - Card C：运维 Run Notes（已完成）
+
+    - docs/RUN_NOTES.md 新增 “Cards 发送与降级运维指南（Day20）”。
+    - 覆盖常用指标、日志检查、429 自救、降级快照核查、快速验证命令。
+    - 验收：逐条命令可在 docker compose -f infra/docker-compose.yml 环境中执行。
+
+  - Card D：幂等键（已完成）
+
+    - 新增 idemp_key(event_key|channel_id|template_v)，Redis SETNX+TTL。
+    - 命中直接返回 dedup:true，避免重复推送/出网。
+    - TTL 复用 DEDUP_TTL（90 分钟），日志含 trace_id。
+    - 验收：同一 event_key+channel+template_v 重复调用返回 dedup:true，不再发送；不同 template_v 可区分。
+
+  - Card E：外呼错误占位指标（已完成）
+
+    - 在 Telegram 发送失败路径中增加计数：
+      - 429 → external_error_total_429
+      - 5xx → external_error_total_5xx
+      - 网络/超时 → external_error_total_net
+    - 验收：伪造响应/关网触发后，export_text() 可见计数累加。
+
+  - 总结：发送链路现已具备快照、降级、指标、幂等保护与运维文档，满足真实环境下可观测性与自愈需求。
+
+## today
