@@ -1,6 +1,7 @@
 """Redis cache key templates and TTL definitions (Day20+21)"""
 from datetime import datetime
 from typing import Optional
+from hashlib import sha1
 
 
 # TTL definitions
@@ -44,3 +45,11 @@ def rate_key_channel(channel_id: int | str) -> str:
         Redis key string like 'rate:tg:CHANNEL_ID'
     """
     return f"rate:tg:channel:{channel_id}"
+
+
+def idemp_key(event_key: str, channel_id: int | str, template_v: str) -> str:
+    """
+    Build idempotency key: cards:idemp:{sha1(f"{event_key}|{channel_id}|{template_v}")}
+    """
+    raw = f"{event_key}|{channel_id}|{template_v}".encode("utf-8")
+    return f"cards:idemp:{sha1(raw).hexdigest()}"
