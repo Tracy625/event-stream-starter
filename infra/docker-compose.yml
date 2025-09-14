@@ -77,11 +77,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/healthz >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8000/healthz >/dev/null 2>&1 || python - <<'PY'\nimport urllib.request,sys\ntry:\n  urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)\n  sys.exit(0)\nexcept Exception:\n  sys.exit(1)\nPY"]
       interval: 10s
       timeout: 3s
-      retries: 3
-      start_period: 5s
+      retries: 20
+      start_period: 10s
 
   worker:
     build:

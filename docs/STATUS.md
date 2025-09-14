@@ -490,4 +490,26 @@
 
   - 总结：发送链路现已具备快照、降级、指标、幂等保护与运维文档，满足真实环境下可观测性与自愈需求。
 
-## today
+- Day22 回放与部署（最小闭环）
+
+  - 一键部署、首卡时间量化、Golden 回放与评分、可重现打包
+
+  - Tasks (max 3)
+
+    1. 一键化与预检：Makefile 目标完成；preflight/env/migrate 脚本可用；`make verify:telegram` 发出 smoke-ok
+    2. Golden 回放：`replay_e2e.sh` + `score_replay.py` 跑通 `demo/golden/golden.jsonl`，产出 `replay_report.json`
+    3. 首卡计时与打包：`measure_boot.sh` ≤ 30m；`build_repro_bundle.sh` 生成 `artifacts/day22_repro_*.zip`
+
+  ### Acceptance
+
+  - Fresh clone → `make up` 成功；API /healthz 200；alembic at head=013
+  - `make verify:telegram` 成功在频道看到 “smoke-ok”
+  - `scripts/measure_boot.sh` 报告 `duration_ms ≤ 1_800_000`（30 分钟）
+  - `scripts/replay_e2e.sh demo/golden/golden.jsonl` 完成并生成 `replay_report.json`；评分达标：`pipeline_success_rate ≥ 0.90`、`alert_accuracy_on_success ≥ 0.80`、`cards_degrade_count ≤ 2`
+  - 生成 `artifacts/day22_repro_*.zip`，包含 redacted env、镜像 digests 与回放报告
+
+  - Safeguards
+
+    - `TELEGRAM_PUSH_ENABLED=false` 时跳过真实发送但仍写回放报告
+    - 失败保留 `logs/day22/*.log` 供定位
+    - 验收请关闭软化开关：`REPLAY_SOFT_FAIL=false`、`SCORE_SOFT_FAIL=false`（软化模式仅用于开发调试，否则不会阻塞流水线）。

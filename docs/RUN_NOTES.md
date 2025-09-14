@@ -1909,3 +1909,27 @@ from api.core.metrics import export_text
 print([l for l in export_text().splitlines() if "external_error_total_net" in l])
 PY'
 ```
+
+## Day22 — 回放与部署（最小闭环）
+
+### 验证命令
+
+- 环境与预检：
+  make preflight
+  make up
+  make verify:api
+  make verify:telegram
+
+- 路由发现：
+  make routes
+  cat logs/day22/openapi.json | jq '.paths | keys[]' | grep -E 'x/|dex/|topic'
+
+- 回放与评分：
+  bash scripts/replay_e2e.sh demo/golden/golden.jsonl
+  python3 scripts/score_replay.py
+
+- 首卡计时：
+  bash scripts/measure_boot.sh
+
+- 打包归档：
+  bash scripts/build_repro_bundle.sh
