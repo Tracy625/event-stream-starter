@@ -1,60 +1,88 @@
-.PHONY: help up down logs api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment smoke-sentiment-batch hf-calibrate verify-refiner demo-refine onchain-verify-once expert-dryrun verify_cards
+.PHONY: help up down rebuild logs verify ps restart replay nuke wait
+.PHONY: api worker migrate revision test demo seed clean dbtest bench-sentiment smoke-sentiment
+.PHONY: smoke-sentiment-batch hf-calibrate verify-refiner demo-refine onchain-verify-once expert-dryrun verify_cards
 
-help:
-	@echo "Targets:"
-	@echo "  up/down/logs       - manage docker compose services"
-	@echo "  migrate/revision   - Alembic apply / create new revision (use m=\"message\")"
-	@echo "  demo               - run demo_ingest.py inside api container"
-	@echo "  bench-sentiment    - run sentiment analysis benchmark (set SENTIMENT_BACKEND=hf for HF)"
-	@echo "  smoke-sentiment    - test both sentiment backends with fixed inputs"
-	@echo "  smoke-sentiment-batch - run batch sentiment processing with HF backend"
-	@echo "  hf-calibrate       - calibrate HF sentiment thresholds with golden data"
-	@echo "  dbtest             - quick DB insert/upsert smoke test"
-	@echo "  api/worker         - run services locally (placeholder)"
-	@echo "  test/seed          - run tests / seed database (placeholder)"
-	@echo "  clean              - clean up temporary files and caches"
+COMPOSE := docker compose -f infra/docker-compose.yml
+API_HEALTH_URL ?= http://localhost:8000/healthz
+HEALTH_TIMEOUT ?= 120
 
-up:
-	@echo "Starting services..."
-	cd infra && docker compose up -d --build
+help: ## Show available targets
+	@awk 'BEGIN{FS=":.*##"; printf "Available targets:\n"} /^[a-zA-Z0-9_-]+:.*?##/{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-down:
-	@echo "Stopping services..."
-	cd infra && docker compose down
+up: ## Preflight + up (wait for healthy)
+	bash scripts/preflight.sh
+	$(COMPOSE) up -d --build
+	$(MAKE) wait
 
-logs:
-	@echo "Tailing logs..."
-	cd infra && docker compose logs -f
+wait: ## Wait until API healthy or timeout
+	@echo "Waiting for API healthy at $(API_HEALTH_URL) ..."
+	@python3 scripts/wait_healthy.py
 
-api:
+down: ## Stop services (keep volumes)
+	$(COMPOSE) down
+
+nuke: ## DANGER: down and remove volumes
+	$(COMPOSE) down -v
+
+rebuild: ## Rebuild without cache, then up
+	$(COMPOSE) build --no-cache
+	$(MAKE) up
+
+logs: ## Tail compose logs
+	$(COMPOSE) logs --tail=200 -f
+
+ps: ## Show compose services
+	$(COMPOSE) ps
+
+restart: ## Restart api service
+	$(COMPOSE) restart api
+
+verify: ## Verify api + telegram
+	$(MAKE) verify:api && $(MAKE) verify:telegram
+
+verify\:api: ## /healthz returns ok
+	@python3 scripts/verify_api.py $(API_HEALTH_URL)
+
+verify\:telegram: ## Verify telegram smoke (honors TELEGRAM_PUSH_ENABLED)
+	@set -a; \
+	test -f .env && . ./.env || true; \
+	test -f .env.local && . ./.env.local || true; \
+	set +a; \
+	python3 scripts/verify_telegram.py
+
+replay: ## Run golden replay (exists check)
+	@test -f demo/golden/golden.jsonl || (echo "golden.jsonl missing"; exit 2)
+	bash scripts/replay_e2e.sh demo/golden/golden.jsonl
+
+api: ## Start API server (placeholder)
 	@echo "Starting API server..."
 	# uvicorn api.main:app --reload
 
-worker:
+worker: ## Start Celery worker (placeholder)
 	@echo "Starting Celery worker..."
 	# celery -A worker.app worker --loglevel=info
 
 # ----- Alembic -----
-migrate:
+migrate: ## Apply alembic migrations
 	@echo "Running alembic upgrade head inside api container..."
-	cd infra && docker compose exec -T api sh -c 'cd /app/api && alembic upgrade head'
+	$(COMPOSE) exec -T api sh -c 'cd /app/api && alembic upgrade head'
 
-revision:
+revision: ## Create alembic revision (use m="message")
 	@if [ -z "$(m)" ]; then echo 'Usage: make revision m="your message"'; exit 1; fi
 	@echo "Creating alembic revision: $(m)"
-	cd infra && docker compose exec -T api sh -c 'cd /app/api && alembic revision -m "$(m)"'
+	$(COMPOSE) exec -T api sh -c 'cd /app/api && alembic revision -m "$(m)"'
 
-test:
+test: ## Run tests (placeholder)
 	@echo "Running tests..."
 	# pytest tests/
 	# npm test
 
 # ----- Demo -----
-demo:
+demo: ## Run demo ingestion pipeline
 	@echo "Running demo ingestion pipeline inside api container..."
-	docker compose -f infra/docker-compose.yml exec -T api python scripts/demo_ingest.py
+	$(COMPOSE) exec -T api python scripts/demo_ingest.py
 
-seed:
+seed: ## Seed database (placeholder)
 	@echo "Seeding database..."
 	# python scripts/seed_db.py
 
@@ -83,7 +111,7 @@ hf-calibrate:
 	echo "Running HF sentiment threshold calibration..."; \
 	docker compose -f infra/docker-compose.yml exec -T api python scripts/hf_calibrate.py --file $$FILE --report $$REPORT --backend hf
 
-clean:
+clean: ## Clean up temporary files and caches
 	@echo "Cleaning up..."
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
@@ -91,10 +119,9 @@ clean:
 	rm -rf htmlcov
 	rm -rf .coverage
 
-.PHONY: dbtest
-dbtest:
+dbtest: ## Quick DB insert/upsert smoke test
 	@echo "Running DB smoke test..."
-	cd infra && docker compose exec -T api python - <<'PY'
+	$(COMPOSE) exec -T api python - <<'PY'
 	from api.database import build_engine_from_env,get_sessionmaker
 	from api.db import with_session,insert_raw_post,upsert_event,now_utc
 	S=get_sessionmaker(build_engine_from_env())
@@ -199,3 +226,19 @@ bench-telegram:
 	echo "Benchmarking Telegram with N=$$N messages..."; \
 	docker compose -f infra/docker-compose.yml exec -T api sh -lc \
 		"python scripts/bench_telegram.py -n $$N --text \"$$TEXT\" --interval-ms $$INTERVAL"
+
+# ----- Routes Discovery -----
+.PHONY: routes
+routes: ## Discover available x/dex/topic routes from OpenAPI
+	@mkdir -p logs/day22
+	@echo "Fetching OpenAPI spec from http://localhost:8000/openapi.json..."
+	@curl -s -f http://localhost:8000/openapi.json -o logs/day22/openapi.json 2>/dev/null && \
+		echo "OpenAPI spec saved to logs/day22/openapi.json" && \
+		echo && \
+		echo "Available routes containing x/, dex/, or topic:" && \
+		echo "--------------------------------------------------" && \
+		python3 -c 'import json; f = open("logs/day22/openapi.json"); spec = json.loads(f.read()); f.close(); paths = spec.get("paths", {}); c = 0; \
+		[print(f"{method.upper():6} {path}") for path in paths if ("/x/" in path or "/dex/" in path or "/topic/" in path) for method in paths[path].keys() if method.upper() in ["GET", "POST", "PUT", "DELETE", "PATCH"]]' || \
+		(echo "Error: Could not connect to API at http://localhost:8000" >&2; \
+		 echo "Make sure the API service is running: make up" >&2; \
+		 exit 1)
