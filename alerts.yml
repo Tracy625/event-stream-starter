@@ -1,0 +1,51 @@
+# Alerting rules configuration
+# 统一命名：snake_case，单位写清楚
+
+rules:
+  # Telegram 错误率高告警
+  - name: telegram_error_rate_high
+    source: metrics              # metrics | db
+    expr: error_rate             # 内置表达式：err/(ok+err)
+    metric: telegram_send_total  # 指标名称
+    threshold: 0.2               # > 20%
+    window_seconds: 60           # 连续满足 60s 才触发（去抖）
+    silence_seconds: 300         # 告警后静默 5 分钟
+    severity: warn
+    notify: default
+    description: "Telegram send error rate exceeds 20%"
+
+  # Cards 退化激增告警
+  - name: cards_degrade_spike
+    source: metrics
+    expr: cards_degrade_delta    # Δcards_degrade_count / window
+    metric: cards_degrade_count  # 指标名称
+    threshold: 5                 # >5 次/窗口
+    window_seconds: 120
+    silence_seconds: 600
+    severity: critical
+    notify: default
+    description: "Cards degrade count spike detected"
+
+  # Pipeline 延迟过高告警
+  - name: pipeline_latency_high
+    source: metrics
+    expr: latency_p95            # 95分位延迟
+    metric: pipeline_latency_ms  # 指标名称
+    threshold: 2000              # >2000ms
+    window_seconds: 180
+    silence_seconds: 900
+    severity: warn
+    notify: default
+    description: "Pipeline P95 latency exceeds 2000ms"
+
+  # 配置重载错误告警
+  - name: config_reload_errors
+    source: metrics
+    expr: error_delta            # 错误计数增量
+    metric: config_reload_errors_total
+    threshold: 1                 # 任何错误
+    window_seconds: 60
+    silence_seconds: 1800        # 30分钟静默
+    severity: error
+    notify: default
+    description: "Configuration reload errors detected"
