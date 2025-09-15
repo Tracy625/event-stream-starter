@@ -513,3 +513,52 @@
     - `TELEGRAM_PUSH_ENABLED=false` 时跳过真实发送但仍写回放报告
     - 失败保留 `logs/day22/*.log` 供定位
     - 验收请关闭软化开关：`REPLAY_SOFT_FAIL=false`、`SCORE_SOFT_FAIL=false`（软化模式仅用于开发调试，否则不会阻塞流水线）。
+
+- Day23+24: 配置治理 & 观测告警 (verified)
+
+  - 目标：
+
+    - rules/\*.yml 热加载，阈值/KOL/黑白名单改动 ≤ 1min 生效
+    - .env.example 注释补齐 + 敏感变量审计；config_lint 全绿
+    - /metrics 暴露成功率/延迟/退化比 + 热加载指标；受 METRICS_EXPOSED 控制
+    - TG 失败自动重试 + 本地告警（alerts.yml + scripts/alerts_runner.py）
+
+  - 产物：
+
+    - `api/config/hotreload.py`（TTL+mtime/sha1 侦测，解析成功后原子切换，SIGHUP 立即刷新，fail-safe 回退旧版）
+    - `scripts/config_lint.py`（YAML/ENV/敏感项统一 Lint，`config_lint: OK|FAIL` 口径）
+    - `.env.example`（完整注释与占位 `__REPLACE_ME__`；新增 `METRICS_EXPOSED=false`）
+    - `api/routes/metrics.py`（Prom v0.0.4，直方图三件套 `_bucket/_sum/_count`，计数器 `_total`，单位 `_ms`）
+    - `alerts.yml` + `scripts/alerts_runner.py`（去抖 `window_seconds`、静默 `silence_seconds`、状态持久化 `--state-file`）
+    - `scripts/notify_local.sh`（本地通知示例）
+    - 文档：`docs/RUN_NOTES.md` 新增 Day23+24 运行手册（原子写流程、热加载演示、metrics 与告警验收、回滚速查）
+
+  - 验收（均在 compose 环境通过）：
+
+    - 配置热更：改阈值后 ≤ 1 分钟日志出现 `config.reload`/`config.applied`，`/metrics` 的 `config_version` 变化
+    - Lint：`python scripts/config_lint.py` 退出码 0；缺失/敏感项扫描通过
+    - Metrics：`Content-Type: text/plain; version=0.0.4`；`pipeline_latency_ms` 直方图三件套输出；`METRICS_EXPOSED=false` 返回 404 并打 `metrics.denied`
+    - 告警：坏 TG token 触发 `telegram_error_rate_high`，静默窗口内不重复告警；人为断 DEX 源 `cards_degrade_spike` 击中；日志前缀 `alert.*` 统一
+
+  - Notes：
+    - 修复了 `/metrics` 被 `/{event_key}` 吞路由的问题（限制通配正则并在 signals_summary 内转发兜底）
+    - 整理多处 `metrics.py` 命名冲突，路由只调用唯一的 builder；避免导入阴影
+    - 所有开关在请求/运行时动态读取 ENV，禁止模块级缓存；容器内设置生效
+    - 指标命名遵循 Prom 规范：计数 `_total`，时间单位 `_ms`，直方图三件套齐全
+
+- Day23+24: card G 新增
+
+  - 完成配置治理与观测告警全链路：
+    - rules/\*.yml 热加载（≤1min 生效，config.reload 日志可见）
+    - .env.example 全量注释与敏感项占位，config_lint 全绿
+    - /metrics 暴露成功率、延迟、退化比，包含 config_reload_total 与 config_version
+    - alerts.yml + scripts/alerts_runner.py 支持去抖、静默窗口与 webhook 通知
+    - 新增 Makefile 护栏：`config-lint / metrics-check / alerts-once / reload-hup / verify-day23-24`
+    - 新增 PR Template，硬性要求 config-lint 输出与 METRICS_EXPOSED 审核
+  - 验收：
+    - 修改 rules/\*.yml 后 ≤1min 出现 config.reload 日志，/metrics 的 config_version 变化
+    - `make config-lint` 返回 OK，敏感/缺失项为 0
+    - 断 DEX 源 → 退化比上涨；坏 TG token → 重试触发 + 告警命中
+    - /metrics 可抓到 telegram_send_total / retry_total / pipeline_latency_ms_bucket / cards_degrade_count
+    - 所有 Makefile 新增目标执行成功，PR Template 生效
+  - 回滚：注释 alerts.yml 全部规则；删除 Makefile 新增目标与 PR Template

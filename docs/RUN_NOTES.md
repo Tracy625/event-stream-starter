@@ -1933,3 +1933,405 @@ PY'
 
 - 打包归档：
   bash scripts/build_repro_bundle.sh
+
+---
+
+## Day23+24 — Configuration Governance & Observability (2025-09-15)
+
+### Card A — Configuration Hot Reload
+
+验收命令:
+
+```bash
+# 修改配置文件
+echo "test_value: 123" >> rules/risk_rules.yml
+
+# 等待热重载（或发送 SIGHUP）
+sleep 70  # 或 docker compose -f infra/docker-compose.yml exec -T api sh -c 'kill -HUP 1'
+
+# 查看重载日志
+docker compose -f infra/docker-compose.yml logs --tail=50 api | grep "config.reload"
+
+# 禁用热重载（紧急开关）
+export CONFIG_HOTRELOAD_ENABLED=false
+docker compose -f infra/docker-compose.yml restart api
+```
+
+### Card B — Configuration Lint
+
+验收命令:
+
+```bash
+# 运行配置 lint
+python scripts/config_lint.py
+
+# 在容器内运行
+docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python scripts/config_lint.py'
+
+# 预期输出: config_lint: OK
+```
+
+### Card C — Sensitive Items Guide (敏感项获取指南)
+
+#### 敏感配置项获取方式和最小权限建议
+
+1. **Telegram Bot Token**
+
+   - 获取来源: Telegram @BotFather
+   - 步骤:
+     1. 在 Telegram 中搜索 @BotFather
+     2. 发送 /newbot 创建新机器人
+     3. 按提示设置名称和用户名
+     4. 获得格式如 `123456789:ABC-DEF...` 的 token
+   - 最小权限: 仅需要发送消息到群组/频道的权限
+   - 安全建议: 定期轮换，限制机器人只加入指定群组
+
+2. **X (Twitter) Bearer Token**
+
+   - 获取来源: https://developer.twitter.com/en/portal/dashboard
+   - 步骤:
+     1. 注册开发者账号
+     2. 创建 App
+     3. 生成 Bearer Token
+   - 最小权限: Read-only access to tweets and user profiles
+   - 安全建议: 使用只读 token，监控 API 使用量
+
+3. **GoPlus API Key**
+
+   - 获取来源: https://gopluslabs.io/
+   - 步骤:
+     1. 注册账号
+     2. 进入 Dashboard
+     3. 创建 API Key
+   - 最小权限: Token detection API access only
+   - 安全建议: 设置 IP 白名单，监控配额使用
+
+4. **OpenAI API Key**
+
+   - 获取来源: https://platform.openai.com/api-keys
+   - 步骤:
+     1. 注册 OpenAI 账号
+     2. 访问 API keys 页面
+     3. 创建新的 API key
+   - 最小权限: 仅模型访问权限，设置使用限额
+   - 安全建议: 设置月度预算上限，使用项目专用 key
+
+5. **GCP Service Account (BigQuery)**
+
+   - 获取来源: GCP Console > IAM & Admin > Service Accounts
+   - 步骤:
+     1. 创建服务账号
+     2. 授予 BigQuery Data Viewer 角色
+     3. 创建并下载 JSON key
+   - 最小权限: BigQuery Data Viewer (只读)
+   - 安全建议: 限制到特定数据集，定期轮换密钥
+
+6. **PostgreSQL Credentials**
+   - 获取来源: 数据库管理员或云服务商控制台
+   - 最小权限:
+     - SELECT, INSERT, UPDATE, DELETE on application tables
+     - No CREATE/DROP database permissions
+   - 安全建议: 使用强密码，限制连接 IP，使用 SSL
+
+#### 原子写约定（配置更新流程）
+
+为避免配置文件半写入状态，遵循以下原子写流程：
+
+1. 写入临时文件: `config.yml.tmp`
+2. 运行 lint 验证: `python scripts/config_lint.py`
+3. 如验证通过，原子替换: `mv config.yml.tmp config.yml`
+
+示例:
+
+```bash
+# 更新配置
+cp rules/risk_rules.yml rules/risk_rules.yml.tmp
+echo "new_threshold: 15" >> rules/risk_rules.yml.tmp
+
+# 验证
+python scripts/config_lint.py
+
+# 应用（仅在验证通过后）
+mv rules/risk_rules.yml.tmp rules/risk_rules.yml
+```
+
+#### 安全检查清单
+
+提交代码前必须检查:
+
+- [ ] 所有 `__REPLACE_ME__` 占位符未被真实值替换
+- [ ] .env 文件未被提交到版本控制
+- [ ] .env.example 中无真实 API keys/tokens
+- [ ] 运行 `scripts/config_lint.py` 无错误
+- [ ] git diff 中无敏感信息
+
+环境变量安全:
+
+```bash
+# 检查是否有敏感信息
+grep -E "sk-[a-zA-Z0-9]{20,}|pk_[a-zA-Z0-9]{20,}" .env.example
+
+# 确认占位符
+grep "__REPLACE_ME__" .env.example | wc -l  # 应该 > 0
+
+# 验证 .gitignore 包含 .env
+grep "^\.env$" .gitignore
+```
+
+### Card E - 告警系统验收
+
+#### 模拟 Telegram 错误触发告警
+
+```bash
+# 1. 启动服务并设置错误的 Telegram token
+export TELEGRAM_BOT_TOKEN="__BROKEN__"
+export METRICS_EXPOSED=true
+docker compose -f infra/docker-compose.yml up -d api
+
+# 2. 生成错误流量
+for i in {1..10}; do
+  curl -X POST http://localhost:8000/telegram/send \
+    -H "Content-Type: application/json" \
+    -d '{"chat_id": "test", "text": "test message"}'
+done
+
+# 3. 运行告警检测
+python scripts/alerts_runner.py --once \
+  --metrics 'http://localhost:8000/metrics' \
+  --min-breach-seconds 30 \
+  --silence-seconds 120 \
+  --notify-script scripts/notify_local.sh \
+  --state-file /tmp/alerts_test.json
+
+# 期望输出: alert.fired: name=telegram_error_rate_high
+```
+
+#### 模拟 Cards 退化触发告警
+
+```bash
+# 1. 触发 cards 退化（通过发送大量事件）
+for i in {1..20}; do
+  curl -X POST http://localhost:8000/x/ingest \
+    -H "Content-Type: application/json" \
+    -d '{"text": "test degrade event"}'
+done
+
+# 2. 运行告警检测
+python scripts/alerts_runner.py --once \
+  --metrics 'http://localhost:8000/metrics' \
+  --notify-script scripts/notify_local.sh \
+  --state-file /tmp/alerts_test.json
+
+# 期望输出: alert.fired: name=cards_degrade_spike
+```
+
+#### 持续监控模式
+
+```bash
+# 启动持续监控（每30秒检查一次）
+python scripts/alerts_runner.py \
+  --interval 30 \
+  --metrics 'http://localhost:8000/metrics' \
+  --min-breach-seconds 60 \
+  --silence-seconds 300 \
+  --notify-script scripts/notify_local.sh \
+  --state-file .alerts_state.json
+
+# 查看告警日志
+tail -f /tmp/alerts_notifications.log
+```
+
+#### 验证告警功能
+
+```bash
+# 1. 检查告警配置
+cat alerts.yml | grep -E "name:|threshold:"
+
+# 2. 测试本地通知脚本
+ALERT_MESSAGE="Test alert" ALERT_RULE="test_rule" ALERT_SEVERITY="warn" \
+  bash scripts/notify_local.sh
+
+# 3. 查看告警状态
+cat .alerts_state.json | jq '.breaches, .silenced'
+
+# 4. 验证日志格式
+python scripts/alerts_runner.py --help 2>&1 | head -5
+```
+
+================================================================
+
+## Day23+24 — 配置与治理 + 观测告警（追加验收手册，Card F 用） (2025-09-15)
+
+> 本段为 **新增补充**，不修改历史内容。目标：将 Day23+24 的 A–E 卡片以“可直接运行”的命令固化，包含原子写、热加载、lint、/metrics、告警、自救回滚与常见故障排查。所有命令均以 compose 环境为准。
+
+### 统一开发约束（强制执行清单）
+
+- 最小 diff，禁止大范围重构；依赖仅限标准库 + `pyyaml`
+- Prom 命名规范：计数 `_total`；时间单位 `_ms`；直方图三件套 `_bucket/_sum/_count`
+- 日志关键字：`config.reload`、`config.applied`、`config.reload.error`、`alert.fired`
+- 任何 ENV 变更必须同步 `.env.example` 注释，并确保 `scripts/config_lint.py` 通过
+- 生产改配置必须走“原子写流程”，禁止直接覆写造成半写入
+
+---
+
+### 原子写流程（配置变更，Card B 依赖）
+
+```bash
+# 以 risk_rules.yml 为例
+cp rules/risk_rules.yml rules/risk_rules.yml.tmp
+# 编辑 *.tmp 后执行 Lint
+docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python scripts/config_lint.py'
+# 仅在 Lint 通过时原子替换
+mv rules/risk_rules.yml.tmp rules/risk_rules.yml
+```
+
+---
+
+### 热加载最短验证（Card A）
+
+```bash
+# 修改配置（示例：阈值）
+sed -i '' 's/threshold: 10/threshold: 11/' rules/risk_rules.yml
+# 等待 TTL 或 SIGHUP 立即刷新
+sleep 70 || true
+docker compose -f infra/docker-compose.yml exec -T api sh -lc 'kill -HUP 1' || true
+
+# 观察关键日志
+docker compose -f infra/docker-compose.yml logs --tail=200 api \
+  | egrep 'config\.reload|config\.applied|config\.reload\.error'
+
+# 版本与计数指标
+curl -s http://localhost:8000/metrics \
+  | egrep 'config_version|config_reload_total'
+```
+
+---
+
+### 配置 Lint（Card B）
+
+```bash
+# 容器内执行 Lint
+docker compose -f infra/docker-compose.yml exec -T api sh -lc 'python scripts/config_lint.py'
+# 预期：退出码 0 且含 "config_lint: OK"
+```
+
+---
+
+### .env.example 规范检查（Card C）
+
+```bash
+# 占位与注释检查
+grep "__REPLACE_ME__" .env.example | wc -l
+grep -E "用途|必填|默认|来源|权限" -n .env.example | head
+# METRICS_EXPOSED 默认必须为 false
+grep -q '^METRICS_EXPOSED=false' .env.example && echo "ok: metrics off by default"
+```
+
+---
+
+### /metrics 验收（Card D）
+
+```bash
+# 1) 开阀门（容器内有效）
+export METRICS_EXPOSED=true
+curl -is http://localhost:8000/metrics | grep -i 'content-type'
+
+# 2) Prom 格式头两行
+curl -s http://localhost:8000/metrics | head -n 10 | grep -E '^# (HELP|TYPE) '
+
+# 3) 直方图三件套必须存在（>0 行）
+curl -s http://localhost:8000/metrics | grep -E '^pipeline_latency_ms_(bucket|sum|count)' | wc -l
+
+# 4) 关阀门（通过 compose/env 生效）
+export METRICS_EXPOSED=false
+docker compose -f infra/docker-compose.yml up -d api
+curl -is http://localhost:8000/metrics | head -n 2  # 预期：404
+```
+
+---
+
+### 告警系统验收（Card E）
+
+```bash
+# 0) 确保 /metrics 可访问
+export METRICS_EXPOSED=true
+
+# 1) 制造 TG 错误流（不要用生产值）
+export TELEGRAM_BOT_TOKEN=__BROKEN__
+python scripts/alerts_runner.py --once --metrics 'http://localhost:8000/metrics' \
+  --min-breach-seconds 30 --silence-seconds 120 \
+  --notify-script scripts/notify_local.sh --state-file .alerts_state.json
+# 预期：输出包含 "alert.fired" 且 name=telegram_error_rate_high
+
+# 2) 静默窗口验证（静默期内再次运行）
+python scripts/alerts_runner.py --once --metrics 'http://localhost:8000/metrics' \
+  --min-breach-seconds 30 --silence-seconds 120 \
+  --notify-script scripts/notify_local.sh --state-file .alerts_state.json
+# 预期：输出 "alert.silenced"
+
+# 3) 退化告警（人为提升 cards_degrade_count）
+python scripts/alerts_runner.py --once --metrics 'http://localhost:8000/metrics' \
+  --notify-script scripts/notify_local.sh --state-file .alerts_state.json
+# 命中阈值则触发 name=cards_degrade_spike
+```
+
+---
+
+### 常见故障排查（按优先级）
+
+1. **路由冲突**：若 `/metrics` 返回 JSON 404，检查是否被 `/{event_key}` 吞掉。采用正则收窄或在该路由内转发 `/metrics`。
+2. **多处 metrics 实现**：仓内如有 `api/metrics.py`、`api/core/metrics.py`、`api/routes/metrics.py`，确保路由端调用的 builder 唯一且包含直方图三件套。
+3. **ENV 未生效**：宿主机 `export` 不等于容器内 ENV。修改 `infra/.env` 或用 compose 注入并重启。避免在代码中模块级缓存 ENV。
+4. **Content-Type 错误**：返回应为 `text/plain; version=0.0.4; charset=utf-8`，否则 Prom 拒收。
+5. **Lint 未覆盖**：任何新增 ENV 需同步 `.env.example` 注释，并保证 `scripts/config_lint.py` 通过。
+
+---
+
+### 回滚速查
+
+- **配置回滚**：恢复 `.yml.bak` 或上一个 commit；`docker compose -f infra/docker-compose.yml up -d api`
+- **热加载关闭**：`CONFIG_HOTRELOAD_ENABLED=false` 并重启 api
+- **/metrics 关闭**：`METRICS_EXPOSED=false` 并重启 api（对外暴露由反代/ACL 控制）
+- **告警停用**：注释 `alerts.yml` 所有规则或停止 `alerts_runner`
+- **脚本自测失败**：仅回滚 `scripts/` 目录变更，不影响 API 运行
+
+> 完成以上小节后，更新 `STATUS.md` 的 Today 段为 Day23+24 SSOT，并引用本段为运行手册来源（Card G 单独提交）。
+
+### 护栏（card G）
+
+### 新增 Makefile 目标
+
+- `make config-lint`  
+  执行 `scripts/config_lint.py`，检查 YAML 与环境变量，敏感项为 0 时返回 OK。
+
+  - 预期：出现 `config_lint: OK`，可有 Warning（如空格）。
+  - 回滚：删除 Makefile 对应 target。
+
+- `make metrics-check`  
+  快速检查 `/metrics`，显示 HELP/TYPE 与直方图三件套。
+
+  - 预期：HTTP/1.1 200 OK，出现 `pipeline_latency_ms` 等指标。
+  - 回滚：删除 Makefile 对应 target。
+
+- `make alerts-once`  
+  单次运行 `scripts/alerts_runner.py`，基于 `/metrics` 触发告警检查。
+
+  - 预期：阈值命中时日志含 `alert.fired`，静默期内不重复。
+  - 回滚：删除 Makefile 对应 target。
+
+- `make reload-hup`  
+  向容器 PID 1 发送 `SIGHUP`，触发配置热加载。
+
+  - 使用前请先在 `docker top <api-container>` 查 PID 并写入命令。
+  - 回滚：删除 Makefile 对应 target。
+
+- `make verify-day23-24`  
+  串测所有上述目标。
+  - 回滚：删除 Makefile 对应 target。
+
+### 其他文件
+
+- `.github/PULL_REQUEST_TEMPLATE.md`
+  - 必须贴上 `make config-lint` 输出片段
+  - 必须说明是否需要 `METRICS_EXPOSED=true`（默认不公开）
+  - 回滚：删除该文件。

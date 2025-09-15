@@ -242,3 +242,60 @@ routes: ## Discover available x/dex/topic routes from OpenAPI
 		(echo "Error: Could not connect to API at http://localhost:8000" >&2; \
 		 echo "Make sure the API service is running: make up" >&2; \
 		 exit 1)
+
+# ----- Day23+24 Configuration Governance & Observability -----
+# Card G: Make targets and local guardrails
+
+SHELL := /bin/sh
+compose := docker compose -f infra/docker-compose.yml
+API := api
+# With working directory exec, avoid container default workdir not being /app
+run_api_wd = $(compose) exec -T -w /app $(API) sh -lc
+
+.PHONY: help-day23 config-lint metrics-check alerts-once reload-hup preflight verify-day23-24 ensure-mount
+
+# Internal guard target: not exposed to help
+.PHONY: ensure-mount
+ensure-mount:
+	@$(compose) exec -T $(API) sh -lc 'test -f /app/.env.example && test -f /app/scripts/alerts_runner.py && test -f /app/scripts/config_lint.py' >/dev/null 2>&1 || { \
+		echo "WARN: repo files not visible inside container (no bind mount?)."; \
+		echo "      Falling back to host-side execution for file-based targets."; \
+	}
+
+help-day23: ## Show Day23+24 targets
+	@printf "\nDay23+24 Targets:\n"
+	@printf "  make preflight           # Local guardrails: check critical files & default config\n"
+	@printf "  make config-lint         # Run config lint in container (Card B)\n"
+	@printf "  make metrics-check       # Quick /metrics health check (Card D)\n"
+	@printf "  make alerts-once         # Run alert evaluation once (Card E)\n"
+	@printf "  make reload-hup          # Send SIGHUP to API container PID 1 (Card A)\n"
+	@printf "  make verify-day23-24     # Run all Day23+24 checks in sequence\n\n"
+
+preflight: ## Check critical files and default configurations
+	@test -f scripts/config_lint.py || (echo "ERR: missing scripts/config_lint.py" && exit 1)
+	@test -f alerts.yml || (echo "ERR: missing alerts.yml" && exit 1)
+	@test -f scripts/alerts_runner.py || (echo "ERR: missing scripts/alerts_runner.py" && exit 1)
+	@grep -q '^METRICS_EXPOSED=false' .env.example || (echo "ERR: .env.example should default METRICS_EXPOSED=false" && exit 1)
+	@echo "ok: preflight passed"
+	@echo "note: container ENV controls /metrics; host 'export' won't hot-reload into running containers"
+
+config-lint: ensure-mount ## Run configuration lint in container
+	@$(run_api_wd) 'test -f scripts/config_lint.py && python scripts/config_lint.py' \
+	|| { echo "fallback: running on host"; python scripts/config_lint.py; }
+
+metrics-check: ## Check /metrics endpoint status and histogram triplets
+	@printf "ENV (container): "; $(compose) exec -T $(API) sh -lc 'env | grep ^METRICS_EXPOSED || true'
+	@printf "HEAD: "; curl -is http://localhost:8000/metrics | sed -n '1,2p'
+	@printf "HELP/TYPE head:\n"; curl -s http://localhost:8000/metrics | head -n 10 | grep -E '^# (HELP|TYPE) ' || true
+	@printf "histogram triplet count: "
+	@curl -s http://localhost:8000/metrics | grep -E '^pipeline_latency_ms_(bucket|sum|count)' | wc -l
+
+alerts-once: ensure-mount ## Run alert evaluation once (no forced failures)
+	@$(run_api_wd) 'test -f scripts/alerts_runner.py && python scripts/alerts_runner.py --once --metrics "http://localhost:8000/metrics" --notify-script scripts/notify_local.sh --state-file /tmp/alerts_once.json' \
+	|| { echo "fallback: running on host"; python scripts/alerts_runner.py --once --metrics "http://localhost:8000/metrics" --notify-script scripts/notify_local.sh || true; }
+
+reload-hup: ## Send SIGHUP to API container PID 1 for config reload
+	@$(compose) exec -T -w /app $(API) sh -lc 'kill -HUP 1 && echo "SIGHUP sent to PID 1"'
+
+verify-day23-24: preflight config-lint metrics-check alerts-once ## Complete Day23+24 local verification
+	@echo "ok: Day23+24 local verification completed"
