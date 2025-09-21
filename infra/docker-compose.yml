@@ -40,7 +40,7 @@ services:
       - ../schemas:/app/schemas:ro
       - ../templates:/app/templates:ro
       - ./secrets:/app/infra/secrets:ro
-    env_file: ./.env
+    env_file: ../.env
     environment:
       PYTHONPATH: /app
       POSTGRES_URL: postgresql://app:app@db:5432/app
@@ -53,20 +53,21 @@ services:
       EXPERT_SOURCE: "pg"
       EXPERT_RATE_LIMIT_PER_MIN: "5"
       EXPERT_CACHE_TTL_SEC: "180"
-      
-      TELEGRAM_MODE: "mock"
-      TELEGRAM_MOCK_PATH: "/tmp/telegram_sandbox.jsonl"
-      TELEGRAM_SANDBOX_CHAT_ID: "123456"
-      TELEGRAM_BOT_TOKEN: ""     # 开发期置空，别去连真TG
-      
+
+      # Use real Telegram (bot token from env)
+      TELEGRAM_BOT_TOKEN: ${TG_BOT_TOKEN}
+
       # Telegram config (Day20+21)
       TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
       TG_CHANNEL_ID: ${TG_CHANNEL_ID:-}
       TG_RATE_LIMIT: ${TG_RATE_LIMIT:-20}
       TG_TIMEOUT_SECS: ${TG_TIMEOUT_SECS:-6}
-      TG_SANDBOX: ${TG_SANDBOX:-}
+      # TG_SANDBOX explicitly disabled for real Telegram
+      TG_SANDBOX: ""
       TG_SANDBOX_CHANNEL_ID: ${TG_SANDBOX_CHANNEL_ID:-}
       TG_SANDBOX_THREAD_ID: ${TG_SANDBOX_THREAD_ID:-}
+      # Enable real Telegram mode
+      TELEGRAM_MODE: ${TELEGRAM_MODE:-real}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis}
     ports:
@@ -91,12 +92,12 @@ services:
     volumes:
       - ..:/app
       - ./secrets:/app/infra/secrets:ro
-    env_file: ./.env
+    env_file: ../.env
     environment:
       POSTGRES_URL: postgresql+psycopg2://app:app@db:5432/app
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: ${REDIS_URL}
-      CELERY_RESULT_BACKEND: ${REDIS_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${REDIS_URL:-redis://redis:6379/0}
       PYTHONPATH: /app:/app/worker/src
       
       # Telegram config (Day20+21)
@@ -104,18 +105,63 @@ services:
       TG_CHANNEL_ID: ${TG_CHANNEL_ID:-}
       TG_RATE_LIMIT: ${TG_RATE_LIMIT:-20}
       TG_TIMEOUT_SECS: ${TG_TIMEOUT_SECS:-6}
-      TG_SANDBOX: ${TG_SANDBOX:-}
+      # TG_SANDBOX explicitly disabled for real Telegram
+      TG_SANDBOX: ""
       TG_SANDBOX_CHANNEL_ID: ${TG_SANDBOX_CHANNEL_ID:-}
       TG_SANDBOX_THREAD_ID: ${TG_SANDBOX_THREAD_ID:-}
+      # Enable real Telegram mode
+      TELEGRAM_MODE: ${TELEGRAM_MODE:-real}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis}
     restart: always
-    command: sh -lc "celery -A worker.app worker --beat -l info --pool=solo"
+    command: sh -lc "celery -A worker.app worker -l info --pool=solo"
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  beat:
+    build:
+      context: ..
+      dockerfile: worker/Dockerfile
+    working_dir: /app
+    volumes:
+      - ..:/app
+      - ./secrets:/app/infra/secrets:ro
+    env_file: ../.env
+    environment:
+      POSTGRES_URL: postgresql+psycopg2://app:app@db:5432/app
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${REDIS_URL:-redis://redis:6379/0}
+      PYTHONPATH: /app:/app/worker/src
+      BEAT_HEARTBEAT_KEY: ${BEAT_HEARTBEAT_KEY:-beat:last_heartbeat}
+      BEAT_STALE_SEC: ${BEAT_STALE_SEC:-15}
+      BEAT_CMD: ${BEAT_CMD:-celery -A worker.app beat --loglevel=INFO}
+      TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
+      TG_CHANNEL_ID: ${TG_CHANNEL_ID:-}
+      TG_RATE_LIMIT: ${TG_RATE_LIMIT:-20}
+      TG_TIMEOUT_SECS: ${TG_TIMEOUT_SECS:-6}
+      # TG_SANDBOX explicitly disabled for real Telegram
+      TG_SANDBOX: ""
+      TG_SANDBOX_CHANNEL_ID: ${TG_SANDBOX_CHANNEL_ID:-}
+      TG_SANDBOX_THREAD_ID: ${TG_SANDBOX_THREAD_ID:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis}
+    command: python scripts/beat_watchdog.py
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "python scripts/beat_healthcheck.py"]
+      interval: 5s
+      timeout: 3s
+      retries: 1
+      start_period: 5s
+    depends_on:
+      redis:
+        condition: service_started
+      worker:
+        condition: service_started
 
   otel:
     image: alpine:latest
@@ -123,4 +169,3 @@ services:
 
 volumes:
   postgres_data:
-

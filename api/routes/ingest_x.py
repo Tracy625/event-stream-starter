@@ -6,26 +6,62 @@ Provides endpoints for manual polling and statistics.
 
 import os
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any
-from fastapi import APIRouter, Query
+from typing import Any, Dict, Optional
+from fastapi import APIRouter, Query, Header, HTTPException, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text as sa_text
 from sqlalchemy.orm import sessionmaker
 
-# Import polling job
-import sys
-if '/app' not in sys.path:
-    sys.path.append('/app')
-from worker.jobs.x_kol_poll import run_once
-from api.metrics import log_json
+# Import polling job (tolerant to import errors so the API doesn't crash)
+try:
+    from worker.jobs.x_kol_poll import run_once  # type: ignore
+    _poll_import_error = None
+except Exception as _e:  # pragma: no cover
+    _poll_import_error = _e
+    def run_once():
+        # Minimal degraded placeholder; keeps the API alive when worker code is unavailable
+        return {"fetched": 0, "inserted": 0, "dedup_hit": 0, "degraded": True, "error": str(_e)}
+from api.core.metrics_store import log_json
+from api.core import idempotency
 
 router = APIRouter(prefix="/ingest/x", tags=["x-ingestion"])
 
+# --- Replay helpers -------------------------------------------------------
+
+class XReplayPayload(BaseModel):
+    """Minimal payload envelope for replay endpoint."""
+
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/replay", status_code=204, summary="Replay endpoint for source=x")
+def ingest_x_replay(
+    body: XReplayPayload,
+    idempotency_key: Optional[str] = Header(None, convert_underscores=False, alias="Idempotency-Key"),
+):
+    """Lightweight replay entry-point guarded by Idempotency-Key."""
+
+    if not idempotency_key:
+        raise HTTPException(status_code=400, detail="Missing Idempotency-Key")
+
+    if idempotency.seen(idempotency_key):
+        return Response(status_code=204)
+
+    # TODO: hook into actual ingestion logic if needed (e.g., process_x(body.payload))
+    idempotency.mark(idempotency_key)
+    log_json(stage="x.replay.accepted", idempotency_key=idempotency_key, payload=body.payload)
+    return Response(status_code=204)
+
+# -------------------------------------------------------------------------
+
+
+# DB session factory (module-level engine to avoid per-request engine creation)
+POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://app:app@db:5432/app")
+ENGINE = create_engine(POSTGRES_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=ENGINE)
 
 def get_db_session():
     """Get database session for stats queries."""
-    postgres_url = os.getenv("POSTGRES_URL", "postgresql://app:app@db:5432/app")
-    engine = create_engine(postgres_url)
-    SessionLocal = sessionmaker(bind=engine)
     return SessionLocal()
 
 
