@@ -1,20 +1,18 @@
 """GoPlus security evaluation for Primary card enforcement"""
 import os
-import yaml
 from typing import Dict, Any, Optional
-from pathlib import Path
-from api.metrics import log_json
+from api.core.metrics_store import log_json
+from api.config.hotreload import get_registry
 
 
 def load_risk_rules() -> Dict[str, Any]:
-    """Load risk rules from YAML file at call-time"""
+    """Load risk rules from registry with hot reload support"""
     try:
-        repo_root = Path(__file__).resolve().parents[2]
-        rules_path = repo_root / "rules" / "risk_rules.yml"
-        if rules_path.exists():
-            with open(rules_path, 'r') as f:
-                return yaml.safe_load(f) or {}
-        return {}
+        registry = get_registry()
+        # Check for stale configs and reload if needed
+        registry.reload_if_stale()
+        # Get risk_rules namespace
+        return registry.get_ns("risk_rules")
     except Exception as e:
         log_json(stage="goplus.rules.load_error", error=str(e))
         return {}

@@ -2,7 +2,9 @@
 import os
 from dataclasses import dataclass
 from typing import Optional
-
+from dotenv import load_dotenv, find_dotenv
+    # 只在本地（未注入环境时）加载根目录 .env，且不覆盖已有变量
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
 @dataclass
 class TelegramConfig:
@@ -80,3 +82,4 @@ class TelegramConfig:
     def effective_thread_id(self) -> Optional[int]:
         """Get effective thread ID considering sandbox mode"""
         return self.sandbox_thread_id if self.sandbox else None
+    

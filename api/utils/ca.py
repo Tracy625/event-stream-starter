@@ -1,7 +1,7 @@
 """Contract address normalization utility"""
 from typing import Optional
 import re
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 def normalize_ca(chain: str, ca: Optional[str], is_official_guess: bool = False) -> dict:

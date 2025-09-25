@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from api.rules import RuleEvaluator
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 def verify_demo_scenarios():

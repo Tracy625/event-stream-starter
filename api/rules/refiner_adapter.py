@@ -8,7 +8,7 @@ with environment-controlled activation and timeout enforcement.
 import os
 import asyncio
 from typing import List, Tuple
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 def maybe_refine_reasons(reasons: List[str]) -> Tuple[List[str], bool]:

@@ -3,7 +3,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, Query, HTTPException
 from api.schemas.security import SecurityResponse, SecuritySummary
 from api.providers.goplus_provider import GoPlusProvider
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 router = APIRouter(prefix="/security", tags=["security"])
 

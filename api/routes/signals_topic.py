@@ -7,7 +7,7 @@ import json
 from api.schemas.topic import TopicSignalResponse
 from api.services.topic_analyzer import TopicAnalyzer, postprocess_topic_signal
 from api.cache import get_redis_client
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 router = APIRouter(prefix="/signals", tags=["signals"])
 analyzer = TopicAnalyzer()

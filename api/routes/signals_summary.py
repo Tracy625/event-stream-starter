@@ -6,6 +6,7 @@ Provides read-only access to signal state and onchain features with caching
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Dict, Any
@@ -56,6 +57,11 @@ def serialize_decimal(d: Optional[Decimal]) -> Optional[float]:
     return float(quantized)
 
 
+def is_valid_event_key(event_key: str) -> bool:
+    """Check if event_key matches the expected format (40 hex chars)."""
+    return bool(re.match(r"^[0-9a-fA-F]{40}$", event_key))
+
+
 @router.get("/{event_key}")
 def get_signal_summary(
     event_key: str,
@@ -63,15 +69,20 @@ def get_signal_summary(
 ) -> Dict[str, Any]:
     """
     Get signal summary with state, onchain features, and verdict.
-    
+
     Returns:
         JSON with signal state, onchain features, verdict, and cache info
-    
+
     Raises:
         404: Signal not found
         500: Internal error
     """
-    
+
+    # Validate event_key format (40 hex characters)
+    # Return 404 for invalid patterns to let other routes match
+    if not is_valid_event_key(event_key):
+        raise HTTPException(status_code=404, detail="Not Found")
+
     # Check Redis cache first
     r = get_redis()
     cache_key = f"sig:view:{event_key}"
@@ -91,8 +102,9 @@ def get_signal_summary(
     try:
         # Query signal state with features_snapshot
         row = db.execute(sa_text("""
-            SELECT 
+            SELECT
                 event_key,
+                type,
                 state,
                 onchain_asof_ts,
                 onchain_confidence,
@@ -134,6 +146,7 @@ def get_signal_summary(
         # Build response
         response = {
             "event_key": row["event_key"],
+            "type": row["type"],
             "state": row["state"] or "candidate",
             "onchain": None,
             "verdict": {

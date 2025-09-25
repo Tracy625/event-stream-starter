@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 # Add API path for imports
 sys.path.append('/app')
 
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 from api.clients.x_client import get_x_client
 import redis
 import yaml

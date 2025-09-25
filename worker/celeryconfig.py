@@ -18,3 +18,21 @@ beat_schedule = {
 }
 
 timezone = 'UTC'
+
+# Task routing configuration
+task_routes = {
+    'worker.tasks.*': {'queue': 'default'},
+    'worker.jobs.x_kol_poll.*': {'queue': 'x_polls'},
+    'worker.jobs.x_avatar_poll.*': {'queue': 'x_polls'},
+    'worker.jobs.outbox_retry.*': {'queue': 'outbox'},
+    'worker.jobs.push_cards.*': {'queue': 'cards'},
+}
+
+# Task retry configuration
+task_annotations = {
+    'worker.jobs.push_cards.process_card': {
+        'rate_limit': '10/s',
+        'time_limit': 30,
+        'soft_time_limit': 25
+    }
+}

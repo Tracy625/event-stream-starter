@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from api.database import build_engine_from_env, get_sessionmaker
 from api.db import with_session
 from sqlalchemy import text as sa_text
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 def setup_demo_data(session):
@@ -40,11 +40,10 @@ def setup_demo_data(session):
     """))
     
     session.execute(sa_text("""
-        INSERT INTO signals (event_key, goplus_risk, buy_tax, sell_tax, lp_lock_days,
+        INSERT INTO signals (event_key, type, goplus_risk, buy_tax, sell_tax, lp_lock_days,
                             dex_liquidity, dex_volume_1h, heat_slope)
-        VALUES ('eth:DEMO1:2025-09-10T10:00:00Z', 'green', 2.0, 2.0, 200,
+        VALUES ('eth:DEMO1:2025-09-10T10:00:00Z', 'market_risk', 'green', 2.0, 2.0, 200,
                 600000.0, 150000.0, 1.5)
-        ON CONFLICT DO NOTHING
     """))
     
     # DEMO2: Missing DEX data (observe)
@@ -56,11 +55,10 @@ def setup_demo_data(session):
     """))
     
     session.execute(sa_text("""
-        INSERT INTO signals (event_key, goplus_risk, buy_tax, sell_tax, lp_lock_days,
+        INSERT INTO signals (event_key, type, goplus_risk, buy_tax, sell_tax, lp_lock_days,
                             dex_liquidity, dex_volume_1h, heat_slope)
-        VALUES ('eth:DEMO2:2025-09-10T11:00:00Z', 'yellow', 5.0, 5.0, 60,
+        VALUES ('eth:DEMO2:2025-09-10T11:00:00Z', 'market_risk', 'yellow', 5.0, 5.0, 60,
                 NULL, NULL, 0.5)
-        ON CONFLICT DO NOTHING
     """))
     
     # DEMO3: Missing HF sentiment (caution)
@@ -72,11 +70,10 @@ def setup_demo_data(session):
     """))
     
     session.execute(sa_text("""
-        INSERT INTO signals (event_key, goplus_risk, buy_tax, sell_tax, lp_lock_days,
+        INSERT INTO signals (event_key, type, goplus_risk, buy_tax, sell_tax, lp_lock_days,
                             dex_liquidity, dex_volume_1h, heat_slope)
-        VALUES ('eth:DEMO3:2025-09-10T12:00:00Z', 'red', 15.0, 15.0, 10,
+        VALUES ('eth:DEMO3:2025-09-10T12:00:00Z', 'market_risk', 'red', 15.0, 15.0, 10,
                 30000.0, 5000.0, -0.5)
-        ON CONFLICT DO NOTHING
     """))
     
     session.commit()

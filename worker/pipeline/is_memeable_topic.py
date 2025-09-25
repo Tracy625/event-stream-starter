@@ -4,7 +4,7 @@ import json
 import re
 from typing import Dict, Any, Tuple, List
 
-from api.metrics import log_json, timeit
+from api.core.metrics_store import log_json, timeit
 from api.cache import get_redis_client
 
 class MemeableTopicDetector:

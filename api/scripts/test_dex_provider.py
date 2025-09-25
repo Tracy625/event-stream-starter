@@ -8,7 +8,7 @@ import time
 import json
 from typing import Dict, Any
 from api.providers.dex_provider import DexProvider
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 # Test configuration
 TEST_TOKEN = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC on Ethereum

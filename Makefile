@@ -54,6 +54,15 @@ replay: ## Run golden replay (exists check)
 	@test -f demo/golden/golden.jsonl || (echo "golden.jsonl missing"; exit 2)
 	bash scripts/replay_e2e.sh demo/golden/golden.jsonl
 
+replay-failed: ## Replay only failed batches based on DB state
+	python3 scripts/replay_failed_only.py $(args)
+
+replay-verify: ## Run replay twice ensuring second pass processes nothing new
+	@test -f demo/golden/golden.jsonl || (echo "golden.jsonl missing"; exit 2)
+	bash scripts/replay_e2e.sh --only-failed demo/golden/golden.jsonl > logs/replay_verify_first.log
+	bash scripts/replay_e2e.sh --only-failed demo/golden/golden.jsonl > logs/replay_verify_second.log
+	grep -q "No failed entries" logs/replay_verify_second.log
+
 api: ## Start API server (placeholder)
 	@echo "Starting API server..."
 	# uvicorn api.main:app --reload
@@ -118,6 +127,18 @@ clean: ## Clean up temporary files and caches
 	rm -rf .pytest_cache
 	rm -rf htmlcov
 	rm -rf .coverage
+
+# P0-3 Card routing verification
+seed-cards-test:
+	@echo "Seeding test data for all card types..."
+	docker compose -f infra/docker-compose.yml exec -T api python api/scripts/seed_cards_test.py
+
+test-cards-route:
+	@echo "Testing card routing for all types..."
+	docker compose -f infra/docker-compose.yml exec -T api python api/scripts/test_cards_route.py
+
+verify-cards: seed-cards-test test-cards-route
+	@echo "Card routing verification complete"
 
 dbtest: ## Quick DB insert/upsert smoke test
 	@echo "Running DB smoke test..."

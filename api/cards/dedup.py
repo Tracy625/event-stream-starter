@@ -1,7 +1,7 @@
 """State-based deduplication for card generation"""
 import os
 from typing import Tuple
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 from api.cache import get_redis_client
 
 

@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from api.schemas.security import SecurityResult
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 class GoPlusProvider:
@@ -77,19 +77,17 @@ class GoPlusProvider:
         return self._db_engine
     
     def _load_rules(self) -> Dict[str, Any]:
-        """Load risk rules from YAML file with robust repo-root resolution"""
+        """Load risk rules from registry with hot reload support"""
         if self._rules is not None:
             return self._rules
         try:
-            import yaml
-            repo_root = Path(__file__).resolve().parents[2]  # /app
-            primary = repo_root / "rules" / "risk_rules.yml"
-            fallback = repo_root / "rules" / "risk_rules.example.yml"
-            if primary.exists():
-                self._rules = yaml.safe_load(primary.read_text()) or {}
-            elif fallback.exists():
-                self._rules = yaml.safe_load(fallback.read_text()) or {}
-            else:
+            from api.config.hotreload import get_registry
+            registry = get_registry()
+            # Check for stale configs and reload if needed
+            registry.reload_if_stale()
+            # Get risk_rules namespace
+            self._rules = registry.get_ns("risk_rules")
+            if not self._rules:
                 log_json(stage="goplus.degrade", reason="rules_missing", backend="rules")
                 self._rules = {}
         except Exception as e:

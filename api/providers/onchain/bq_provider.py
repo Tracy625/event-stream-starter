@@ -9,8 +9,75 @@ from google.cloud import bigquery
 from api.clients.bq_client import BQClient
 from api.utils.logging import log_json
 from api.utils.cache import RedisCache
+from api.core import metrics as metrics_core
 import re
 
+
+ALLOWED_DEGRADE_REASONS = {"cost_guard", "template_error", "bq_off", "upstream_error", "dry_run_failed"}
+
+# Metrics registry (module-level singletons)
+METRIC_BQ_QUERY_TOTAL = metrics_core.counter(
+    "bq_query_total",
+    "Count of BigQuery operations by template/chain/source/kind"
+)
+
+METRIC_BQ_BYTES_SCANNED_TOTAL = metrics_core.counter(
+    "bq_bytes_scanned_total",
+    "Total bytes scanned by BigQuery queries"
+)
+
+METRIC_BQ_COST_GUARD_HIT = metrics_core.counter(
+    "bq_cost_guard_hit_total",
+    "Total BigQuery cost-guard hits"
+)
+
+METRIC_BQ_DRY_RUN_FAIL = metrics_core.counter(
+    "bq_dry_run_fail_total",
+    "Total BigQuery dry-run failures"
+)
+
+METRIC_ONCHAIN_DEGRADE = metrics_core.counter(
+    "onchain_degrade_total",
+    "Count of onchain degrade events grouped by reason"
+)
+
+METRIC_BQ_DATA_FRESHNESS_LAG = metrics_core.gauge(
+    "bq_data_freshness_lag_seconds",
+    "Latest BigQuery freshness lag in seconds"
+)
+
+METRIC_BQ_MAX_BYTES = metrics_core.gauge(
+    "bq_maximum_bytes_billed_bytes",
+    "Configured BigQuery maximum bytes billed guard"
+)
+
+METRIC_BQ_LAST_JOB_BYTES = metrics_core.gauge(
+    "bq_last_job_bytes_scanned",
+    "Last BigQuery job bytes scanned"
+)
+
+METRIC_BQ_QUERY_LATENCY = metrics_core.histogram(
+    "bq_query_latency_seconds",
+    "BigQuery query latency in seconds",
+    [1, 2, 5, 10, 30, 60]
+)
+
+
+def _label_tpl(template: Optional[str]) -> str:
+    if not template:
+        return "unknown"
+    return template.replace("/", "_")
+
+
+def _label_chain(chain: Optional[str]) -> str:
+    if not chain:
+        return "unknown"
+    return chain.lower()
+
+
+def _record_degrade(reason: str) -> None:
+    reason_label = reason if reason in ALLOWED_DEGRADE_REASONS else "other"
+    METRIC_ONCHAIN_DEGRADE.inc(labels={"reason": reason_label})
 
 class BQSettings(NamedTuple):
     """BigQuery configuration settings."""
@@ -75,6 +142,8 @@ class BQProvider:
         self.client = BQClient()
         self.templates_dir = Path(__file__).parent.parent.parent.parent / "templates" / "sql"
         self.cache = RedisCache()
+        # Surface current guard config
+        METRIC_BQ_MAX_BYTES.set(int(self.settings.max_scanned_gb * (1024 ** 3)))
         
     def run_template(self, name: str, **kwargs) -> Dict | List:
         """
@@ -90,6 +159,7 @@ class BQProvider:
         backend = os.getenv("ONCHAIN_BACKEND", "bq")
         if backend == "off":
             log_json(stage="bq_provider.run_template", backend_off=True, template=name)
+            _record_degrade("bq_off")
             return {"degrade": True, "reason": "bq_off"}
 
         # For business ETH templates, delegate to guarded executor
@@ -101,6 +171,7 @@ class BQProvider:
             sql_template = self._get_inline_template(name)
             if not sql_template:
                 log_json(stage="bq_provider.run_template", error="template_not_found", template=name)
+                _record_degrade("template_error")
                 return {"degrade": True, "reason": "template_not_found", "template": name}
 
             sql = sql_template  # inline templates already have dataset substituted and LIMIT
@@ -108,14 +179,28 @@ class BQProvider:
 
             # Dry-run using shared helper
             try:
-                bytes_scanned = self._dry_run_with_params(sql, [])
+                bytes_scanned = self._dry_run_with_params(
+                    sql,
+                    [],
+                    template=name,
+                    chain=kwargs.get("chain"),
+                    source="inline"
+                )
             except Exception as e:
                 log_json(stage="bq_provider.run_template", error="dry_run_failed", template=name, details=str(e))
+                _record_degrade("dry_run_failed")
                 return {"degrade": True, "reason": "dry_run_failed", "template": name}
 
             # Cost guard consistent with guarded executor
             max_bytes = int(self.settings.max_scanned_gb * 1024 * 1024 * 1024)
+            METRIC_BQ_MAX_BYTES.set(max_bytes)
+
             if bytes_scanned > max_bytes:
+                METRIC_BQ_COST_GUARD_HIT.inc(labels={
+                    "tpl": _label_tpl(name),
+                    "chain": _label_chain(kwargs.get("chain"))
+                })
+                _record_degrade("cost_guard")
                 log_json(
                     stage="bq_provider.run_template",
                     cost_guard_hit=True,
@@ -128,9 +213,15 @@ class BQProvider:
                     "bq_bytes_scanned": bytes_scanned,
                     "template": name,
                 }
-
             # Execute with cost cap (no params for inline probes)
-            rows = self._execute_with_params(sql, [], max_bytes)
+            rows = self._execute_with_params(
+                sql,
+                [],
+                max_bytes,
+                template=name,
+                chain=kwargs.get("chain"),
+                source="inline"
+            )
             if not rows:
                 return {"degrade": True, "reason": "no_data", "template": name}
 
@@ -141,8 +232,30 @@ class BQProvider:
 
         except Exception as e:
             log_json(stage="bq_provider.run_template", error=str(e), template=name, degrade=True)
+            _record_degrade("upstream_error")
             return {"degrade": True, "reason": "provider_error", "template": name}
-    
+
+    def _render_template(self, sql_template: str) -> str:
+        """Render template variables for guarded templates."""
+        replacements = {
+            "BQ_DATASET_RO": self.settings.dataset,
+            "BQ_DATASET": self.settings.dataset,
+            "BQ_PROJECT": self.settings.project,
+            "GCP_PROJECT": self.settings.project,
+        }
+
+        def _replace_double(match: re.Match) -> str:
+            key = match.group(1)
+            return replacements.get(key, match.group(0))
+
+        def _replace_dollar(match: re.Match) -> str:
+            key = match.group(1)
+            return replacements.get(key, match.group(0))
+
+        sql = re.sub(r"\{\{\s*([A-Z0-9_]+)\s*\}\}", _replace_double, sql_template)
+        sql = re.sub(r"\$\{([A-Z0-9_]+)\}", _replace_dollar, sql)
+        return sql
+
     def _get_inline_template(self, name: str) -> Optional[str]:
         """Get inline SQL template for known queries."""
         templates = {
@@ -224,6 +337,18 @@ class BQProvider:
                     
                     # Ensure data_as_of is present
                     if "data_as_of" in result:
+                        try:
+                            if isinstance(result["data_as_of"], str):
+                                data_dt = datetime.fromisoformat(result["data_as_of"].replace("Z", "+00:00"))
+                            else:
+                                data_dt = result["data_as_of"]
+                            lag_seconds = max(0.0, (datetime.now(timezone.utc) - data_dt).total_seconds())
+                            METRIC_BQ_DATA_FRESHNESS_LAG.set(
+                                lag_seconds,
+                                labels={"chain": _label_chain(chain)}
+                            )
+                        except Exception:
+                            pass
                         log_json(
                             stage="bq_provider.freshness",
                             success=True,
@@ -257,6 +382,7 @@ class BQProvider:
         template_path = self.templates_dir / "eth" / f"{template}.sql"
         if not template_path.exists():
             log_json(stage="bq.execute_template", error="template_not_found", template=template)
+            _record_degrade("template_error")
             return {
                 "stale": True,
                 "degrade": "template_error",
@@ -271,6 +397,7 @@ class BQProvider:
         lint_result = self._lint_template(sql_template, template)
         if not lint_result["valid"]:
             log_json(stage="bq.execute_template", lint_failed=True, template=template, reason=lint_result["reason"])
+            _record_degrade("template_error")
             return {
                 "stale": True,
                 "degrade": "template_error",
@@ -287,16 +414,23 @@ class BQProvider:
         query_params = self._prepare_query_params(params, template)
         
         # Replace template variables
-        sql_rendered = sql_template.replace("${BQ_DATASET_RO}", self.settings.dataset)
+        sql_rendered = self._render_template(sql_template)
         log_json(stage="bq.sql_preview", template=template, sql_head=sql_rendered[:220])
         
         # Dry-run for cost estimation
         try:
             try:
-                bytes_scanned = self._dry_run_with_params(sql_rendered, query_params)
+                bytes_scanned = self._dry_run_with_params(
+                    sql_rendered,
+                    query_params,
+                    template=template,
+                    chain=params.get("chain"),
+                    source="template"
+                )
                 log_json(stage="bq.dry_run", template=template, bq_bytes_scanned=bytes_scanned)
             except Exception as dry_run_error:
                 log_json(stage="bq.dry_run", error="dry_run_failed", template=template, details=str(dry_run_error))
+                _record_degrade("dry_run_failed")
                 return {
                     "degrade": "dry_run_failed",
                     "template": template,
@@ -306,8 +440,14 @@ class BQProvider:
             
             # Cost guard
             max_bytes = int(self.settings.max_scanned_gb * 1024 * 1024 * 1024)
-            
+            METRIC_BQ_MAX_BYTES.set(max_bytes)
+
             if bytes_scanned > max_bytes:
+                METRIC_BQ_COST_GUARD_HIT.inc(labels={
+                    "tpl": _label_tpl(template),
+                    "chain": _label_chain(params.get("chain"))
+                })
+                _record_degrade("cost_guard")
                 log_json(
                     stage="bq.query",
                     cost_guard_hit=True,
@@ -336,8 +476,15 @@ class BQProvider:
                 return cached
             
             # Execute query with cost limit
-            result = self._execute_with_params(sql_rendered, query_params, max_bytes)
-            
+            result = self._execute_with_params(
+                sql_rendered,
+                query_params,
+                max_bytes,
+                template=template,
+                chain=params.get("chain"),
+                source="template"
+            )
+
             # Process results
             response = self._process_template_results(result, template, params)
             response["bq_bytes_scanned"] = bytes_scanned
@@ -371,6 +518,7 @@ class BQProvider:
         except Exception as e:
             # Bubble up the dry-run error so caller sees the exact reason
             log_json(stage="bq.execute_template", error=str(e), template=template)
+            _record_degrade("upstream_error")
             return {
                 "degrade": "dry_run_failed",
                 "template": template,
@@ -392,7 +540,11 @@ class BQProvider:
         
         # For non-snapshot templates, check time window (robust to spaces/newlines)
         if template != "top_holders_snapshot":
-            if not re.search(r"block_timestamp\s+between\s+@from_ts\s+and\s+@to_ts", sql_lower, re.I):
+            time_window_pattern = re.compile(
+                r"block_timestamp\s+between\s+.*?@from_ts.*?\s+and\s+.*?@to_ts",
+                re.IGNORECASE | re.DOTALL,
+            )
+            if not time_window_pattern.search(sql_lower):
                 return {"valid": False, "reason": "missing_time_window"}
         
         return {"valid": True}
@@ -460,8 +612,17 @@ class BQProvider:
         ]
         return ":".join(key_parts)
     
-    def _dry_run_with_params(self, sql: str, query_params: List) -> int:
+    def _dry_run_with_params(
+        self,
+        sql: str,
+        query_params: List,
+        template: Optional[str] = None,
+        chain: Optional[str] = None,
+        source: str = "template"
+    ) -> int:
         """Dry-run query with parameters."""
+        tpl_label = _label_tpl(template)
+        chain_label = _label_chain(chain)
         try:
             job_config = bigquery.QueryJobConfig(
                 query_parameters=query_params,
@@ -469,20 +630,65 @@ class BQProvider:
                 use_query_cache=False
             )
             query_job = self.client._get_client().query(sql, job_config=job_config)
-            return query_job.total_bytes_processed or 0
+            bytes_scanned = query_job.total_bytes_processed or 0
+            METRIC_BQ_QUERY_TOTAL.inc(labels={
+                "tpl": tpl_label,
+                "chain": chain_label,
+                "source": source,
+                "kind": "dry_run"
+            })
+            return bytes_scanned
         except Exception as e:
             log_json(stage="bq.dry_run", error=str(e))
+            METRIC_BQ_DRY_RUN_FAIL.inc(labels={
+                "tpl": tpl_label,
+                "chain": chain_label
+            })
             raise
-    
-    def _execute_with_params(self, sql: str, query_params: List, max_bytes: int) -> List[Dict]:
+
+    def _execute_with_params(
+        self,
+        sql: str,
+        query_params: List,
+        max_bytes: int,
+        template: Optional[str] = None,
+        chain: Optional[str] = None,
+        source: str = "template"
+    ) -> List[Dict]:
         """Execute query with parameters and cost limit."""
+        tpl_label = _label_tpl(template)
+        chain_label = _label_chain(chain)
         job_config = bigquery.QueryJobConfig(
             query_parameters=query_params,
             maximum_bytes_billed=max_bytes
         )
+        start = time.perf_counter()
         query_job = self.client._get_client().query(sql, job_config=job_config)
-        results = list(query_job.result())
-        
+        results_iter = query_job.result()
+        results = list(results_iter)
+        elapsed = time.perf_counter() - start
+        bytes_processed = getattr(query_job, "total_bytes_processed", 0) or 0
+
+        METRIC_BQ_QUERY_TOTAL.inc(labels={
+            "tpl": tpl_label,
+            "chain": chain_label,
+            "source": source,
+            "kind": "query"
+        })
+        METRIC_BQ_BYTES_SCANNED_TOTAL.inc(labels={
+            "tpl": tpl_label,
+            "chain": chain_label
+        }, value=bytes_processed)
+        METRIC_BQ_LAST_JOB_BYTES.set(bytes_processed, labels={
+            "tpl": tpl_label,
+            "chain": chain_label
+        })
+        METRIC_BQ_QUERY_LATENCY.observe(elapsed, labels={
+            "tpl": tpl_label,
+            "chain": chain_label,
+            "source": source
+        })
+
         # Convert to dicts
         rows = []
         for row in results:
@@ -572,15 +778,19 @@ class BQProvider:
             ],
             maximum_bytes_billed=int(self.settings.max_scanned_gb * (1024**3)),
         )
-        
+
         try:
+            METRIC_BQ_MAX_BYTES.set(job_config.maximum_bytes_billed or 0)
+            start = time.perf_counter()
             query_job = self.client._get_client().query(
-                sql, 
-                job_config=job_config, 
+                sql,
+                job_config=job_config,
                 location=self.settings.location
             )
             results = query_job.result(timeout=self.settings.timeout_s)
-            
+            elapsed = time.perf_counter() - start
+            bytes_processed = getattr(query_job, "total_bytes_processed", 0) or 0
+
             # Convert to list of dicts
             rows = []
             for row in results:
@@ -599,9 +809,31 @@ class BQProvider:
                 window_minutes=window_minutes,
                 row_count=len(rows)
             )
-            
+
+            tpl_label = _label_tpl("light_view")
+            chain_label = _label_chain(chain)
+            METRIC_BQ_QUERY_TOTAL.inc(labels={
+                "tpl": tpl_label,
+                "chain": chain_label,
+                "source": "view",
+                "kind": "query"
+            })
+            METRIC_BQ_BYTES_SCANNED_TOTAL.inc(labels={
+                "tpl": tpl_label,
+                "chain": chain_label
+            }, value=bytes_processed)
+            METRIC_BQ_LAST_JOB_BYTES.set(bytes_processed, labels={
+                "tpl": tpl_label,
+                "chain": chain_label
+            })
+            METRIC_BQ_QUERY_LATENCY.observe(elapsed, labels={
+                "tpl": tpl_label,
+                "chain": chain_label,
+                "source": "view"
+            })
+
             return rows
-            
+
         except Exception as e:
             log_json(
                 stage="bq.query_light_features",

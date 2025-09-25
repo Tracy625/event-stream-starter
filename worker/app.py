@@ -1,3 +1,4 @@
+import api  # noqa: F401 ensure API instrumentation (requests metrics) available in worker
 from celery import Celery
 import os
 
@@ -14,7 +15,7 @@ app.conf.update(
     enable_utc=True,
 )
 
-app.autodiscover_tasks(['worker.jobs', 'worker'])
+app.autodiscover_tasks(['worker.jobs', 'worker', 'api.tasks'])
 
 # Import tasks to ensure beat schedule is registered
 from . import tasks
@@ -31,6 +32,7 @@ def setup_periodic_tasks(sender, **kwargs):
         outbox_process_batch.s(),
         name="outbox-process-every-20s",
     )
+
 
 if __name__ == "__main__":
     print("Celery app loaded:", app)

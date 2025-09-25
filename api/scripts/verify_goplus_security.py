@@ -9,7 +9,7 @@ if not os.getenv("SECURITY_BACKEND"):
 
 # Import after setting environment
 from api.providers.goplus_provider import GoPlusProvider
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 def main():
     """Run verification tests for GoPlus provider"""

@@ -4,32 +4,38 @@ import logging
 from pathlib import Path
 from typing import Optional, Tuple
 
-import yaml
-
+from api.config.hotreload import get_registry
 from api.onchain.dto import OnchainFeature, Rules, Verdict
 
 logger = logging.getLogger(__name__)
 
 
-def load_rules(path: str) -> Rules:
+def load_rules(path: str = None) -> Rules:
     """
-    Load and validate rules from YAML file.
-    
+    Load and validate rules from registry with hot reload support.
+
     Args:
-        path: Path to YAML rules file
-        
+        path: Optional path to YAML rules file (for backwards compatibility)
+
     Returns:
         Validated Rules object
-        
+
     Raises:
         ValueError: If rules structure or values are invalid
     """
     try:
-        with open(path, 'r') as f:
-            data = yaml.safe_load(f)
+        registry = get_registry()
+        # Check for stale configs and reload if needed
+        registry.reload_if_stale()
+        # Get onchain namespace from registry
+        data = registry.get_ns("onchain")
+
+        if not data:
+            logger.error(f"No onchain rules found in registry")
+            raise ValueError(f"No onchain rules found")
     except Exception as e:
-        logger.error(f"Failed to load rules from {path}: {e}")
-        raise ValueError(f"Failed to load rules file: {e}")
+        logger.error(f"Failed to load rules: {e}")
+        raise ValueError(f"Failed to load rules: {e}")
     
     # Validate top-level structure
     if not isinstance(data, dict):

@@ -6,6 +6,9 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
+metadata = Base.metadata
+
+__all__ = ["Base", "metadata"]
 
 
 class RawPost(Base):
@@ -42,9 +45,10 @@ class Event(Base):
 
 class Signal(Base):
     __tablename__ = 'signals'
-    
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     event_key = Column(Text, ForeignKey('events.event_key', ondelete='CASCADE'))
+    type = Column(Text, nullable=False)
     market_type = Column(Text)
     advice_tag = Column(Text)
     confidence = Column(Integer)

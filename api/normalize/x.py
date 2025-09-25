@@ -7,7 +7,7 @@ Standardizes raw tweets from X clients into unified format with light parsing.
 import os
 import re
 from typing import Dict, Any, Optional
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 def normalize_tweet(raw_tweet: Dict[str, Any]) -> Optional[Dict[str, Any]]:

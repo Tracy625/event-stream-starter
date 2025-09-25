@@ -1,0 +1,1 @@
+"""Configuration management module with hot reload support."""

@@ -4,7 +4,7 @@ import time
 import threading
 from typing import Optional, Dict, Any
 import httpx
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 class GoPlusClientError(Exception):
