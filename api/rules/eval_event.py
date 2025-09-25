@@ -11,16 +11,11 @@ Features:
 
 import os
 import re
-import threading
-import time
-import hashlib
-import copy
 import ast
-from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
-import yaml
 
-from api.metrics import log_json
+from api.core.metrics_store import log_json
+from api.config.hotreload import get_registry
 
 # Safety limits
 MAX_FILE_BYTES = 262144  # 256KB
@@ -29,161 +24,68 @@ ALLOWED_ENVS = {"THETA_LIQ", "THETA_VOL", "THETA_SENT"}
 
 
 class RuleLoader:
-    """Loads and caches rules from YAML with thread-safe hot-reload support."""
-    
+    """Wrapper for rules from HotConfigRegistry with validation."""
+
     def __init__(self, rules_path: str = "rules/rules.yml"):
-        self.rules_path = Path(rules_path)
-        self._ttl_sec = int(os.getenv("RULES_TTL_SEC", "5"))
-        
-        # Cache structure: {"rules": dict, "version": str, "mtime": float, "etag": str}
-        self._cache = None
-        self._lock = threading.Lock()
-        self._next_check = 0.0  # Next allowed check time (monotonic)
-        self._hot_reloaded = False  # Flag for current request
+        # rules_path is ignored, kept for compatibility
+        self._registry = get_registry()
         
     def get(self) -> Tuple[Optional[dict], str, bool]:
         """
-        Get rules with hot-reload support.
-        
+        Get rules from registry with validation.
+
         Returns:
             Tuple of (rules_dict, version_string, hot_reloaded_flag)
         """
-        with self._lock:
-            now_mono = time.monotonic()
-            
-            # Throttle checks using monotonic time
-            if now_mono < self._next_check:
-                # Return cached version without checking file
-                if self._cache:
-                    return self._cache["rules"], self._cache["version"], False
-                # No cache and not time to check yet
-                return None, "error", False
-            
-            # Update next check time regardless of outcome
-            self._next_check = now_mono + self._ttl_sec
-            
-            # Try to reload rules
-            hot_reloaded = self._try_reload()
-            
-            # Return current cache state
-            if self._cache:
-                return self._cache["rules"], self._cache["version"], hot_reloaded
-            
-            # No valid cache available
-            return None, "error", False
-    
-    def _try_reload(self) -> bool:
-        """
-        Try to reload rules from file.
-        
-        Returns:
-            True if rules were successfully reloaded, False otherwise.
-        """
         try:
-            # Check if file exists
-            if not self.rules_path.exists():
-                log_json("rules.file_missing", 
-                        path=str(self.rules_path),
-                        module="api.rules.eval_event")
-                return False
-            
-            # Get file stats
-            stat = self.rules_path.stat()
-            current_mtime = stat.st_mtime
-            file_size = stat.st_size
-            
-            # Check file size limit
-            if file_size > MAX_FILE_BYTES:
-                log_json("rules.reload_error",
-                        hot_reload=False,
-                        error=f"File too large: {file_size} > {MAX_FILE_BYTES}",
-                        reason="file_size_exceeded",
-                        module="api.rules.eval_event")
-                return False
-            
-            # If we have cache and mtime hasn't changed, skip reload
-            if self._cache and self._cache.get("mtime") == current_mtime:
-                return False
-            
-            # Read file content
-            try:
-                content = self.rules_path.read_text(encoding="utf-8", errors="strict")
-            except (FileNotFoundError, UnicodeDecodeError) as e:
-                log_json("rules.reload_error",
-                        hot_reload=False,
-                        error=f"File read error: {str(e)[:200]}",
-                        reason="io_error",
-                        module="api.rules.eval_event")
-                return False
-            
-            # Calculate etag
-            etag = hashlib.sha256(content.encode()).hexdigest()
-            
-            # If content hasn't changed, just update mtime
-            if self._cache and self._cache.get("etag") == etag:
-                self._cache["mtime"] = current_mtime
-                return False
-            
-            # Substitute environment variables (whitelisted only)
-            content = self._substitute_env_vars_safe(content)
-            
-            # Parse YAML
-            try:
-                rules = yaml.safe_load(content)
-            except yaml.YAMLError as e:
-                log_json("rules.reload_error",
-                        hot_reload=False,
-                        error=f"YAML parse error: {str(e)[:200]}",
-                        reason="yaml_parse_error",
-                        module="api.rules.eval_event")
-                return False
-            
-            # Validate structure and safety
+            # Check for stale configs and reload if needed
+            hot_reloaded = self._registry.reload_if_stale()
+
+            # Get rules namespace
+            rules = self._registry.get_ns("rules")
+
+            if not rules:
+                return None, "error", False
+
+            # Apply environment variable substitution
+            rules = self._substitute_env_vars_in_dict(rules)
+
+            # Validate the rules
             validation_error = self._validate_rules_comprehensive(rules)
             if validation_error:
-                log_json("rules.reload_error",
-                        hot_reload=False,
+                log_json("rules.validation_error",
                         error=validation_error[:200],
                         reason="validation_failed",
                         module="api.rules.eval_event")
-                return False
-            
-            # Deep copy to ensure isolation
-            new_rules = copy.deepcopy(rules)
-            
-            # Generate version if not provided
-            if "version" not in new_rules or not new_rules["version"]:
-                new_rules["version"] = f"filemtime:{int(current_mtime)}"
-            
-            # Build new cache object
-            new_cache = {
-                "rules": new_rules,
-                "version": new_rules["version"],
-                "mtime": current_mtime,
-                "etag": etag
-            }
-            
-            # Log successful reload
-            old_version = self._cache["version"] if self._cache else None
-            log_json("rules.reloaded",
-                    new_version=new_cache["version"],
-                    hot_reload=old_version is not None,
-                    ttl_sec=self._ttl_sec,
-                    etag_prefix=etag[:8] if etag else None,
-                    module="api.rules.eval_event")
-            
-            # Atomic replacement
-            self._cache = new_cache
-            return True
-            
+                return None, "error", False
+
+            version = rules.get("version", self._registry.snapshot_version())
+
+            return rules, version, hot_reloaded
+
         except Exception as e:
-            log_json("rules.reload_error",
-                    hot_reload=False,
-                    error=f"Unexpected error: {str(e)[:200]}",
+            log_json("rules.load_error",
+                    error=f"Failed to load rules: {str(e)[:200]}",
                     reason="unexpected_error",
                     module="api.rules.eval_event")
-            return False
+            return None, "error", False
     
+    def _substitute_env_vars_in_dict(self, data: dict) -> dict:
+        """Recursively substitute environment variables in dictionary values."""
+        import copy
+        result = copy.deepcopy(data)
+
+        def substitute_value(value):
+            if isinstance(value, str):
+                return self._substitute_env_vars_safe(value)
+            elif isinstance(value, dict):
+                return {k: substitute_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [substitute_value(item) for item in value]
+            return value
+
+        return substitute_value(result)
+
     def _substitute_env_vars_safe(self, content: str) -> str:
         """Replace ${ENV_KEY:default} with environment values (whitelisted only)."""
         pattern = r'\$\{([A-Z_]+):([^}]*)\}'

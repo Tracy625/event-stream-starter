@@ -122,6 +122,85 @@ sample_degraded = {
     "data_as_of": "2025-09-02T16:00:00Z"
 }
 
+# Topic card sample data
+sample_topic = {
+    "type": "topic",
+    "token_info": {
+        "symbol": "MEME",
+        "ca_norm": "0x9999999999999999999999999999999999999999",
+        "chain": "eth"
+    },
+    "topic_id": "pepe_trend_2025",
+    "topic_entities": ["pepe", "frog", "meme_coin", "eth_chain", "degen"],
+    "topic_keywords": ["test_keyword", "moon[shot]", "100x", "trending", "viral"],
+    "topic_mention_count": 42,
+    "topic_confidence": 0.85,
+    "topic_sources": ["twitter", "telegram", "discord", "reddit", "4chan", "weibo"],
+    "topic_evidence_links": [
+        "https://twitter.com/example/status/123",
+        "https://t.me/example/456",
+        "https://discord.com/channels/789",
+        "https://reddit.com/r/example/101112",
+        "https://boards.4chan.org/biz/thread/131415"
+    ],
+    "states": {
+        "degrade": False
+    },
+    "verify_path": "/topics/pepe_trend_2025",
+    "data_as_of": "2025-09-02T16:00:00Z"
+}
+
+# Topic card with missing fields
+sample_topic_degraded = {
+    "type": "topic",
+    "token_info": {},
+    "states": {
+        "degrade": True
+    },
+    "verify_path": "/",
+    "data_as_of": "2025-09-02T16:00:00Z"
+}
+
+# Market risk card sample data
+sample_market_risk = {
+    "type": "market_risk",
+    "risk_level": "red",
+    "goplus_risk": "red",
+    "token_info": {
+        "symbol": "RISKY",
+        "ca_norm": "0xbadbadbadbadbadbadbadbadbadbadbadbadbadb",
+        "chain": "eth"
+    },
+    "buy_tax": 2.5,
+    "sell_tax": 5.0,
+    "lp_lock_days": 0,
+    "honeypot": True,
+    "risk_note": "极高风险 - 蜜罐代币",
+    "sources": {
+        "security_source": "GoPlus@v1.2"
+    },
+    "states": {
+        "degrade": False
+    },
+    "verify_path": "https://gopluslabs.io/token-security/1/0xbadbadbadbadbadbadbadbadbadbadbadbadbadb",
+    "data_as_of": "2025-09-02T16:00:00Z"
+}
+
+# Market risk card with missing fields
+sample_market_risk_degraded = {
+    "type": "market_risk",
+    "token_info": {
+        "symbol": "UNKNOWN",
+        "chain": "eth"
+    },
+    "sources": {},
+    "states": {
+        "degrade": True
+    },
+    "verify_path": "/",
+    "data_as_of": "2025-09-02T16:00:00Z"
+}
+
 def test_templates():
     """Test rendering both templates"""
     # Setup Jinja2 environment
@@ -158,7 +237,53 @@ def test_templates():
     print("\n3. DEGRADED CARD (No Data):")
     print("-" * 40)
     print(tg_template.render(card_data=sample_degraded))
-    
+
+    # Test Topic card templates
+    print("\n" + "=" * 60)
+    print("TOPIC CARD TESTS")
+    print("=" * 60)
+
+    if os.path.exists(os.path.join(template_dir, 'topic_card.tg.j2')):
+        topic_tg_template = tg_env.get_template('topic_card.tg.j2')
+
+        print("\n1. TOPIC CARD (Complete):")
+        print("-" * 40)
+        print(topic_tg_template.render(card_data=sample_topic))
+
+        print("\n2. TOPIC CARD (Degraded/Missing Fields):")
+        print("-" * 40)
+        print(topic_tg_template.render(card_data=sample_topic_degraded))
+
+        # Test UI version
+        topic_ui_template = ui_env.get_template('topic_card.ui.j2')
+        html_output = topic_ui_template.render(card_data=sample_topic)
+        print(f"\n✓ Topic card HTML rendered: {len(html_output)} bytes")
+    else:
+        print("\n⚠️  Topic card templates not found")
+
+    # Test Market Risk card templates
+    print("\n" + "=" * 60)
+    print("MARKET RISK CARD TESTS")
+    print("=" * 60)
+
+    if os.path.exists(os.path.join(template_dir, 'market_risk_card.tg.j2')):
+        market_risk_tg_template = tg_env.get_template('market_risk_card.tg.j2')
+
+        print("\n1. MARKET RISK CARD (Complete):")
+        print("-" * 40)
+        print(market_risk_tg_template.render(card_data=sample_market_risk))
+
+        print("\n2. MARKET RISK CARD (Degraded/Missing Fields):")
+        print("-" * 40)
+        print(market_risk_tg_template.render(card_data=sample_market_risk_degraded))
+
+        # Test UI version
+        market_risk_ui_template = ui_env.get_template('market_risk_card.ui.j2')
+        html_output = market_risk_ui_template.render(card_data=sample_market_risk)
+        print(f"\n✓ Market Risk card HTML rendered: {len(html_output)} bytes")
+    else:
+        print("\n⚠️  Market Risk card templates not found")
+
     # Test UI template
     print("\n" + "=" * 60)
     print("UI TEMPLATE TEST (HTML snippet)")

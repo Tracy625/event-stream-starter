@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 
-from api.metrics import log_json, timeit
+from api.core.metrics_store import log_json, timeit
 from api.cache import get_redis_client
 from api.core import metrics
 from api.core import tracing
@@ -34,11 +34,14 @@ class TelegramNotifier:
         Returns: {"success": bool, "message_id": str, "error": str}
         """
         
+        mode = (os.getenv("TELEGRAM_MODE", "mock") or "mock").strip().lower()
+        force_429 = (os.getenv("TELEGRAM_FORCE_429", "") or "").strip().lower() in ("1", "true", "yes", "y", "on")
+
         # Get metrics
         error_counter = metrics.counter("telegram_error_code_count", "Telegram error codes")
         latency_hist = metrics.histogram("telegram_send_latency_ms", "Telegram send latency", 
                                         [50, 100, 200, 500, 1000, 2000, 5000])
-        
+
         # Start timing
         start_time = time.time()
         event_key = kwargs.get("event_key")
@@ -61,13 +64,13 @@ class TelegramNotifier:
         if cfg.sandbox and cfg.sandbox_channel_id:
             chat_id = str(cfg.effective_channel_id())
         
-        if not self.bot_token:
+        if mode != "mock" and not self.bot_token:
             log_json(
                 stage="telegram.error",
                 error="TELEGRAM_BOT_TOKEN not configured"
             )
             return {"success": False, "error": "Bot token not configured"}
-        
+
         try:
             # Use new rate limiter with 1s window
             from api.core.rate_limiter import allow_or_wait
@@ -75,39 +78,86 @@ class TelegramNotifier:
             # Get effective channel ID as int
             effective_channel = int(chat_id) if chat_id.lstrip("-").isdigit() else None
             
-            # Check rate limit before sending
-            if not allow_or_wait(effective_channel, max_wait_ms=1000):
-                # Local rate limit hit
-                error_counter.inc({"code": "429"})
-                
-                # Structured log
+            # Check rate limit before sending; block until allowed instead of synthesizing 429
+            wait_start = time.time()
+            ok = allow_or_wait(effective_channel, max_wait_ms=5000)
+            while not ok:
+                # short sleep to avoid tight loop; allow_or_wait enforces window
+                time.sleep(0.05)
+                ok = allow_or_wait(effective_channel, max_wait_ms=5000)
+            # Optional visibility: how long we waited locally (does not count as 429)
+            waited_ms = int((time.time() - wait_start) * 1000)
+            if waited_ms > 0:
+                log_json(
+                    stage="telegram.ratelimit_wait",
+                    chat_id=chat_id,
+                    waited_ms=waited_ms
+                )
+
+            if mode == "mock":
+                latency_ms = (time.time() - start_time) * 1000
+                latency_hist.observe(latency_ms)
+
+                if force_429:
+                    log_entry = {
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "evt": "telegram.send",
+                        "channel_id": chat_id,
+                        "event_key": event_key,
+                        "ok": False,
+                        "code": "429",
+                        "error_code": 429,
+                        "reason": "forced_429",
+                        "latency_ms": int(latency_ms),
+                        "attempt": attempt,
+                        "trace_id": trace_id
+                    }
+                    print(json.dumps(log_entry))
+                    log_json(
+                        stage="telegram.mock_429",
+                        chat_id=chat_id,
+                        error="forced_429",
+                        error_code=429
+                    )
+                    error_counter.inc({"code": "429"})
+                    return {
+                        "success": False,
+                        "error": "forced_429",
+                        "error_code": 429,
+                        "status_code": 429,
+                        "retry_after": 1
+                    }
+
+                record = _push_mock(text)
+                message_id = f"mock-{int(timestamp := (time.time() * 1000))}"
+                error_counter.inc({"code": "200"})
                 log_entry = {
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "evt": "telegram.send",
                     "channel_id": chat_id,
                     "event_key": event_key,
-                    "ok": False,
-                    "code": "429",
-                    "latency_ms": int((time.time() - start_time) * 1000),
+                    "ok": True,
+                    "code": "200",
+                    "latency_ms": int(latency_ms),
                     "attempt": attempt,
-                    "trace_id": trace_id
+                    "trace_id": trace_id,
+                    "mock_path": str(MOCK_PATH),
+                    "message_id": message_id
                 }
                 print(json.dumps(log_entry))
-                
                 log_json(
-                    stage="telegram.ratelimit",
+                    stage="telegram.mock_sent",
                     chat_id=chat_id,
-                    error="rate_limited"
+                    text_length=len(text),
+                    mock_path=str(MOCK_PATH)
                 )
-                
                 return {
-                    "success": False,
-                    "error": "rate_limited",
-                    "error_code": 429,
-                    "status_code": 429,
-                    "retry_after": 1
+                    "success": True,
+                    "message_id": message_id,
+                    "status_code": 200,
+                    "mock_record": record
                 }
-            
+
             # Prepare request
             url = f"{self.base_url}/sendMessage"
             
@@ -385,7 +435,7 @@ class TelegramNotifier:
 
 
 # Module-level convenience functions for Day9.1 verification
-MODE = os.getenv("TELEGRAM_MODE", "mock").lower()
+MODE = (os.getenv("TELEGRAM_MODE", "mock") or "mock").strip().lower()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_SANDBOX_CHAT_ID")
 MOCK_PATH = Path(os.getenv("TELEGRAM_MOCK_PATH", "/tmp/telegram_sandbox.jsonl"))

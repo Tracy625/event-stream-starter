@@ -9,7 +9,7 @@ import json
 import time
 import requests
 from typing import Dict, Any, List, Optional
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 class DexVerifier:

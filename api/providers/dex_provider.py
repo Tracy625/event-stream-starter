@@ -5,7 +5,7 @@ import time
 import requests
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 class DexProvider:

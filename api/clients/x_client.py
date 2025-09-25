@@ -15,7 +15,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone, timedelta
 import json
 import httpx
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 class XClient(ABC):

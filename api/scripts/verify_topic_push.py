@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, '/Users/tracy-mac/Desktop/GUIDS')
 
 from api.cache import get_redis_client
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 from api.services.telegram import TelegramNotifier
 from worker.jobs.push_topic_candidates import format_topic_message
 

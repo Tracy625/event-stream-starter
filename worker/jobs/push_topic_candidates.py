@@ -5,7 +5,7 @@ from typing import Dict, Any
 
 from celery import Celery
 from api.cache import get_redis_client
-from api.metrics import log_json, timeit
+from api.core.metrics_store import log_json, timeit
 from api.services.telegram import TelegramNotifier
 
 app = Celery('worker')

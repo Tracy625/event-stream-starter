@@ -18,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 # Import from api modules (package imports already available in container PYTHONPATH)
 from api.clients.x_client import get_x_client
 from api.normalize.x import normalize_tweet
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 from api.models import Base, RawPost
 
 

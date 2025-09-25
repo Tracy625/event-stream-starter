@@ -8,16 +8,13 @@ from alembic import context
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 # Import models for autogenerate support
-import models
+from api.models import metadata as target_metadata
 
 config = context.config
 
 # Set up logging from alembic.ini
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-
-# Set target metadata from models
-target_metadata = models.Base.metadata
 
 def _require_db_url() -> str:
     """Get database URL from environment variable POSTGRES_URL"""

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Set
 from sqlalchemy import create_engine, Table, MetaData, func, text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from api.metrics import log_json, timeit
+from api.core.metrics_store import log_json, timeit
 
 # Track if salt change warning has been shown
 _salt_warning_shown = False

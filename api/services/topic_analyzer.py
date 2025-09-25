@@ -9,7 +9,7 @@ import numpy as np
 
 from api.schemas.topic import TopicSignalResponse, TopicMergeConfig
 from api.cache import get_redis_client, memoize_ttl
-from api.metrics import log_json, timeit
+from api.core.metrics_store import log_json, timeit
 from api.database import get_db
 from sqlalchemy import text as sa_text
 

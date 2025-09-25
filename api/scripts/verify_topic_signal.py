@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, '/Users/tracy-mac/Desktop/GUIDS')
 
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 BASE = os.getenv("API_BASE", "http://localhost:8000")
 TOPIC_ID = os.getenv("TEST_TOPIC_ID", "t.test")

@@ -18,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 
 # Add parent path for imports
 sys.path.append('/app')
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 def log_json_to_stderr(**kwargs):
     print("[JSON] " + json.dumps(kwargs, ensure_ascii=False), file=sys.stderr)

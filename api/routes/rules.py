@@ -15,7 +15,7 @@ from sqlalchemy import text as sa_text
 
 from api.database import get_db
 from api.rules import RuleEvaluator
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 router = APIRouter(prefix="/rules", tags=["rules"])

@@ -4,7 +4,7 @@ import re
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import JSONResponse
 from api.providers.dex_provider import DexProvider
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 router = APIRouter(prefix="/dex", tags=["dex"])
 

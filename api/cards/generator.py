@@ -1,20 +1,153 @@
 """Card generator with template rendering and schema validation"""
 import json
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 from jinja2 import Environment, FileSystemLoader
 from jsonschema import validate, ValidationError, Draft7Validator
 from api.utils.ca import normalize_ca
 from api.cards.dedup import make_state_version, should_emit, mark_emitted
+from api.cards.registry import RenderPayload, CardMeta, CardType
+from api.utils.logging import log_json
 
-def log_json(stage: str, **kwargs):
-    """Structured JSON logging"""
-    log_entry = {"stage": stage, **kwargs}
-    print(f"[JSON] {json.dumps(log_entry)}")
+def generate_primary_card(signal: Dict[str, Any], *, now: datetime) -> RenderPayload:
+    """
+    Generate primary card context
+
+    Args:
+        signal: Signal data with type, risk_level, token_info, etc.
+        now: Current time for data_as_of
+
+    Returns:
+        RenderPayload with template_name, context, and meta
+    """
+    # Extract token info
+    token_info = signal.get("token_info", {})
+
+    # Build context for primary card
+    context = {
+        "type": "primary",
+        "risk_level": signal.get("risk_level", "yellow"),
+        "token_info": token_info,
+        "risk_note": signal.get("risk_note", ""),
+        "verify_path": signal.get("verify_path", "/"),
+        "data_as_of": now.strftime("%Y-%m-%dT%H:%MZ"),
+        "legal_note": signal.get("legal_note", "本信息仅为风险线索与技术判断，不构成投资建议。"),
+        "goplus_risk": signal.get("goplus_risk"),
+        "buy_tax": signal.get("buy_tax"),
+        "sell_tax": signal.get("sell_tax"),
+        "lp_lock_days": signal.get("lp_lock_days"),
+        "honeypot": signal.get("honeypot"),
+        "risk_source": signal.get("risk_source", "GoPlus@unknown"),
+        "states": signal.get("states", {})
+    }
+
+    # Build meta
+    meta: CardMeta = {
+        "type": "primary",
+        "event_key": signal.get("event_key", ""),
+        "degrade": signal.get("is_degraded", False),
+        "template_base": "primary_card",
+        "latency_ms": None,
+        "diagnostic_flags": signal.get("diagnostic_flags")
+    }
+
+    return RenderPayload(
+        template_name="primary_card",
+        context=context,
+        meta=meta
+    )
+
+def generate_secondary_card(signal: Dict[str, Any], *, now: datetime) -> RenderPayload:
+    """Generate secondary card context"""
+    token_info = signal.get("token_info", {})
+
+    # Determine source level
+    signal_source = signal.get("source", "").lower()
+    if ("verified" in signal_source and "unverified" not in signal_source) or "confirmed" in signal_source:
+        source_level = "confirmed"
+    else:
+        source_level = "rumor"
+
+    context = {
+        "type": "secondary",
+        "risk_level": signal.get("risk_level", "yellow"),
+        "token_info": token_info,
+        "source_level": source_level,
+        "features_snapshot": signal.get("features_snapshot", {
+            "active_addrs": None,
+            "top10_share": None,
+            "growth_30m": None,
+            "stale": True
+        }),
+        "risk_note": signal.get("risk_note", "二级卡数据暂不可用"),
+        "verify_path": signal.get("verify_path", "/"),
+        "data_as_of": now.strftime("%Y-%m-%dT%H:%MZ"),
+        "legal_note": signal.get("legal_note", "本信息仅为风险线索与技术判断，不构成投资建议。"),
+        "states": signal.get("states", {})
+    }
+
+    meta: CardMeta = {
+        "type": "secondary",
+        "event_key": signal.get("event_key", ""),
+        "degrade": signal.get("is_degraded", False),
+        "template_base": "secondary_card",
+        "latency_ms": None,
+        "diagnostic_flags": signal.get("diagnostic_flags")
+    }
+
+    return RenderPayload(
+        template_name="secondary_card",
+        context=context,
+        meta=meta
+    )
+
+def generate_topic_card(signal: Dict[str, Any], *, now: datetime) -> RenderPayload:
+    """Generate topic card context"""
+    context = {
+        "type": "topic",
+        "token_info": signal.get("token_info", {}),
+        "topic_id": signal.get("topic_id"),
+        "topic_entities": signal.get("topic_entities", []),
+        "topic_keywords": signal.get("topic_keywords", []),
+        "topic_mention_count": signal.get("topic_mention_count"),
+        "topic_confidence": signal.get("topic_confidence"),
+        "topic_sources": signal.get("topic_sources", []),
+        "topic_evidence_links": signal.get("topic_evidence_links", []),
+        "verify_path": signal.get("verify_path", "/"),
+        "data_as_of": now.strftime("%Y-%m-%dT%H:%MZ"),
+        "legal_note": signal.get("legal_note", "本信息仅为风险线索与技术判断，不构成投资建议。"),
+        "states": signal.get("states", {})
+    }
+
+    meta: CardMeta = {
+        "type": "topic",
+        "event_key": signal.get("event_key", ""),
+        "degrade": signal.get("is_degraded", False),
+        "template_base": "topic_card",
+        "latency_ms": None,
+        "diagnostic_flags": signal.get("diagnostic_flags")
+    }
+
+    return RenderPayload(
+        template_name="topic_card",
+        context=context,
+        meta=meta
+    )
+
+def generate_market_risk_card(signal: Dict[str, Any], *, now: datetime) -> RenderPayload:
+    """Generate market risk card context"""
+    # Similar to primary but with market risk specific fields
+    # Reuse primary card logic with market risk adjustments
+    payload = generate_primary_card(signal, now=now)
+    payload["meta"]["type"] = "market_risk"
+    payload["template_name"] = "market_risk_card"
+    payload["meta"]["template_base"] = "market_risk_card"
+    return payload
 
 def generate_card(event: Dict[str, Any], signals: Dict[str, Any]) -> Dict[str, Any]:
     """
+    DEPRECATED: Use generate_*_card functions with render_pipeline instead
     Generate card from event and signals data
     
     Args:
@@ -206,9 +339,15 @@ def generate_card(event: Dict[str, Any], signals: Dict[str, Any]) -> Dict[str, A
         # Render templates (after validation)
         try:
             template_dir = "templates/cards"
-            
+
             # Select template based on card type
-            template_base = "secondary_card" if card["type"] == "secondary" else "primary_card"
+            TYPE_TO_BASE = {
+                "primary": "primary_card",
+                "secondary": "secondary_card",
+                "topic": "topic_card",
+                "market_risk": "market_risk_card"
+            }
+            template_base = TYPE_TO_BASE.get(card["type"], "primary_card")
             
             # Telegram template (no autoescape)
             tg_env = Environment(

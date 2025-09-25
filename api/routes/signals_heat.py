@@ -14,7 +14,7 @@ except Exception:
     from api.db import get_db
 
 from api.signals.heat import normalize_token, normalize_token_ca, compute_heat, persist_heat
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 router = APIRouter(prefix="/signals", tags=["signals"])

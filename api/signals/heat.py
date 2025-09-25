@@ -11,7 +11,7 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, Tuple
 from sqlalchemy import text as sa_text
-from api.metrics import log_json, timeit
+from api.core.metrics_store import log_json, timeit
 
 # EMA state cache (in-memory for simplicity)
 _ema_cache = {}
@@ -546,9 +546,10 @@ def persist_heat(db, *, token: Optional[str] = None, token_ca: Optional[str] = N
         
         # First check if row exists (with optional lock for concurrency)
         check_query = sa_text("""
-            SELECT 1 
+            SELECT 1
             FROM signals
             WHERE event_key = :event_key
+              AND (type = 'secondary' OR type IS NULL)
             FOR UPDATE NOWAIT
         """)
         
@@ -590,7 +591,8 @@ def persist_heat(db, *, token: Optional[str] = None, token_ca: Optional[str] = N
         # Direct update by event_key, no join needed
         update_query = sa_text("""
             UPDATE signals
-            SET features_snapshot = jsonb_set(
+            SET type = 'secondary',
+                features_snapshot = jsonb_set(
                     COALESCE(features_snapshot, '{}'::jsonb),
                     '{heat}',
                     (:payload)::jsonb,
@@ -598,6 +600,7 @@ def persist_heat(db, *, token: Optional[str] = None, token_ca: Optional[str] = N
                 ),
                 ts = NOW()
             WHERE event_key = :event_key
+              AND (type = 'secondary' OR type IS NULL)
         """)
         
         result = db.execute(update_query, params)

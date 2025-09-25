@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, text as sa_text
 from api.providers.goplus_provider import GoPlusProvider
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 def goplus_scan(batch: Optional[int] = None) -> Dict[str, int]:
@@ -58,6 +58,7 @@ def goplus_scan(batch: Optional[int] = None) -> Dict[str, int]:
                     FROM signals s
                     JOIN events e ON e.event_key = s.event_key
                     WHERE s.goplus_risk IS NULL
+                      AND (s.type = 'market_risk' OR s.type IS NULL)
                     LIMIT :batch_size
                 """),
                 {"batch_size": batch_size}
@@ -135,7 +136,8 @@ def goplus_scan(batch: Optional[int] = None) -> Dict[str, int]:
                     conn.execute(
                         sa_text("""
                             UPDATE signals
-                               SET goplus_risk = :risk,
+                               SET type = 'market_risk',
+                                   goplus_risk = :risk,
                                    buy_tax = :buy_tax,
                                    sell_tax = :sell_tax,
                                    lp_lock_days = :lp_lock_days,

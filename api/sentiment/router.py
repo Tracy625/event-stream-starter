@@ -1,31 +1,31 @@
-import os
 import json
 from typing import Tuple
 
-# === FastAPI router (added for HTTP exposure) ===
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/sentiment", tags=["sentiment"])
+from api.hf_sentiment import analyze_with_fallback
 
 class _SentimentIn(BaseModel):
     text: str
 
+router = APIRouter(prefix="/sentiment", tags=["sentiment"])
+
+
 @router.get("")
 def sentiment_get(text: str):
-    """
-    Back-compat: GET /sentiment?text=...
-    """
-    label, score = analyze(text)  # 使用你现有的 analyze()
-    return {"label": label, "score": score}
+    """Back-compat: GET /sentiment?text=..."""
+    payload, status = analyze_with_fallback(text, path_label="get")
+    return JSONResponse(content=payload, status_code=status)
 
 @router.post("/analyze")
 def sentiment_post(body: _SentimentIn):
     """
     JSON body: {"text": "..."}
     """
-    label, score = analyze(body.text)
-    return {"label": label, "score": score}
+    payload, status = analyze_with_fallback(body.text, path_label="post")
+    return JSONResponse(content=payload, status_code=status)
 
 def log_json(stage: str, **kv) -> None:
     kv["stage"] = stage
@@ -33,27 +33,8 @@ def log_json(stage: str, **kv) -> None:
 
 
 def analyze(text: str) -> Tuple[str, float]:
-    backend = os.getenv("SENTIMENT_BACKEND", "rules")
-    strict = os.getenv("SENTIMENT_STRICT", "0") == "1"
-    
-    if backend == "hf":
-        try:
-            from api.hf_sentiment import analyze_hf
-            return analyze_hf(text)
-        except Exception as e:
-            if strict:
-                raise
-            log_json(
-                "sentiment.downgrade",
-                backend="hf",
-                reason=str(e),
-                downgrade=True
-            )
-            from api.rules_sentiment import analyze_rules
-            return analyze_rules(text)
-    else:
-        from api.rules_sentiment import analyze_rules
-        return analyze_rules(text)
+    payload, _ = analyze_with_fallback(text, path_label="script")
+    return payload.get("label", "neu"), float(payload.get("score", 0.0))
 
 
 __all__ = ["analyze", "router"]
