@@ -1,0 +1,54 @@
+{#- Topic Card Template for UI (HTML) -#}
+<div class="card topic-card">
+  <div class="card-header">
+    <span class="badge badge-info">🔵 话题信号</span>
+  </div>
+
+  {% if card_data.token_info %}
+  <div class="token-info">
+    <strong>候选代币:</strong> {{ card_data.token_info.symbol | default('UNKNOWN') }} ({{ card_data.token_info.chain | default('eth') | upper }})
+    {% if card_data.token_info.ca_norm %}
+    <br><strong>合约地址:</strong> <code>{{ card_data.token_info.ca_norm[:6] }}...{{ card_data.token_info.ca_norm[-4:] }}</code>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="topic-info">
+    <h4>📌 话题信息</h4>
+    <ul>
+      {% if card_data.topic_id is defined and card_data.topic_id %}
+      <li><strong>话题ID:</strong> {{ card_data.topic_id }}</li>
+      {% endif %}
+      {% if card_data.topic_entities is defined and card_data.topic_entities and card_data.topic_entities|length > 0 %}
+      <li><strong>相关实体:</strong> {{ card_data.topic_entities[:5] | join(', ') }}</li>
+      {% endif %}
+      {% if card_data.topic_keywords is defined and card_data.topic_keywords and card_data.topic_keywords|length > 0 %}
+      <li><strong>关键词:</strong> {{ card_data.topic_keywords[:5] | join(', ') }}</li>
+      {% endif %}
+      <li><strong>提及次数:</strong> {{ card_data.topic_mention_count | default('N/A') }}</li>
+      <li><strong>置信度:</strong> {{ "%.1f%%" | format(card_data.topic_confidence * 100) if card_data.topic_confidence is defined and card_data.topic_confidence is not none else "待计算" }}</li>
+      {% if card_data.topic_sources is defined and card_data.topic_sources and card_data.topic_sources|length > 0 %}
+      <li><strong>来源:</strong> {{ card_data.topic_sources[:5] | join(', ') }}</li>
+      {% endif %}
+      {% if card_data.topic_evidence_links is defined and card_data.topic_evidence_links and card_data.topic_evidence_links|length > 0 %}
+      <li><strong>证据:</strong>
+        {% for link in card_data.topic_evidence_links[:5] %}
+        <a href="{{ link }}">证据{{ loop.index }}</a>{% if not loop.last %}, {% endif %}
+        {% endfor %}
+      </li>
+      {% endif %}
+    </ul>
+  </div>
+
+  {% if card_data.states is defined and card_data.states.degrade %}
+  <div class="alert alert-warning">
+    ⚠️ <strong>服务降级提示:</strong> 部分数据服务暂时不可用，显示结果基于缓存或降级策略
+  </div>
+  {% endif %}
+
+  <div class="card-footer">
+    <p>🔍 <strong>验证路径:</strong> {{ card_data.verify_path | default('/') }}</p>
+    <p>📅 <strong>数据时间:</strong> {{ card_data.data_as_of | default('N/A') }}</p>
+    <p class="legal-note"><em>{{ card_data.legal_note | default("本信息仅为风险线索与技术判断，不构成投资建议。") }}</em></p>
+  </div>
+</div>

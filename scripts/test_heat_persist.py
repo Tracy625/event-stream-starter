@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.signals.heat import persist_heat, compute_heat
-from api.metrics import log_json
+from api.core.metrics_store import log_json
 
 
 def setup_test_row(db, symbol: str, token_ca: str):

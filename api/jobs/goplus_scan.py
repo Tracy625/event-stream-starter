@@ -7,6 +7,10 @@ from datetime import datetime, timezone
 from sqlalchemy import create_engine, text as sa_text
 from api.providers.goplus_provider import GoPlusProvider
 from api.core.metrics_store import log_json
+from api.rules import RuleEvaluator
+from api.core.metrics import signals_type_set_total
+from api.cache import get_redis_client
+from api.cards.dedup import make_state_version_with_rules
 
 
 def goplus_scan(batch: Optional[int] = None) -> Dict[str, int]:
@@ -131,28 +135,132 @@ def goplus_scan(batch: Optional[int] = None) -> Dict[str, int]:
                     else:
                         # 空或异常，兜底为单元素列表
                         new_evidence = [{"source": "goplus", "goplus_raw": goplus_summary}]
-                    
+
+                    # Get current signal type to avoid overwriting
+                    current_type_result = conn.execute(
+                        sa_text("SELECT type FROM signals WHERE id = :id"),
+                        {"id": signal_id}
+                    ).fetchone()
+                    current_type = current_type_result[0] if current_type_result else None
+
+                    # Determine signal type using rules engine
+                    signal_type = current_type  # Keep existing by default
+
+                    if current_type != "market_risk":
+                        # Prepare data for rule evaluation
+                        signals_data = {
+                            "goplus_risk": security_result.risk_label,
+                            "buy_tax": security_result.buy_tax,
+                            "sell_tax": security_result.sell_tax,
+                            "lp_lock_days": security_result.lp_lock_days,
+                            "honeypot": security_result.honeypot,
+                            "dex_liquidity": conn.execute(
+                                sa_text("SELECT dex_liquidity FROM signals WHERE id = :id"),
+                                {"id": signal_id}
+                            ).scalar(),
+                            "dex_volume_1h": conn.execute(
+                                sa_text("SELECT dex_volume_1h FROM signals WHERE id = :id"),
+                                {"id": signal_id}
+                            ).scalar(),
+                            "heat_slope": conn.execute(
+                                sa_text("SELECT heat_slope FROM signals WHERE id = :id"),
+                                {"id": signal_id}
+                            ).scalar() or 0
+                        }
+                        events_data = {
+                            "last_sentiment_score": conn.execute(
+                                sa_text("SELECT sentiment_score FROM events WHERE event_key = :key"),
+                                {"key": event_key}
+                            ).scalar()
+                        }
+
+                        # Evaluate rules
+                        evaluator = RuleEvaluator()
+                        eval_result = evaluator.evaluate(signals_data, events_data)
+
+                        # Check for market risk tag with cooldown
+                        if "market_risk" in eval_result.get("tags", []):
+                            redis_client = get_redis_client()
+                            cooldown_key = f"mr:cooldown:{event_key}"
+                            cooldown_sec = int(os.getenv("MARKET_RISK_COOLDOWN_SEC", 600))
+
+                            if not redis_client.exists(cooldown_key):
+                                signal_type = "market_risk"
+                                redis_client.setex(cooldown_key, cooldown_sec, "1")
+                                signals_type_set_total.inc({"type": "market_risk"})
+                                # 计算包含规则命中的 state_version（不落库，先打日志用于追踪）
+                                try:
+                                    sv_rules = make_state_version_with_rules(
+                                        {"event_key": event_key},  # 若 make_state_version 只用 event_key 足够
+                                        eval_result.get("hit_rules", [])
+                                    )
+                                except Exception:
+                                    sv_rules = None
+                                log_json(
+                                    stage="signals.type_set",
+                                    type="market_risk",
+                                    event_key=event_key,
+                                    reason="market_risk_tag",
+                                    hit_rules=eval_result.get("hit_rules", []),
+                                    state_version_rules=sv_rules
+                                )
+                            else:
+                                # 处理ttl可能的负值
+                                ttl = redis_client.ttl(cooldown_key)
+                                log_json(
+                                    stage="signals.cooldown_skip",
+                                    event_key=event_key,
+                                    cooldown_remaining=max(ttl, 0)  # 避免负数
+                                )
+                    else:
+                        log_json(
+                            stage="signals.type_unchanged",
+                            type="market_risk",
+                            event_key=event_key
+                        )
+
                     # 回填 1：signals（风控字段）
-                    conn.execute(
-                        sa_text("""
+                    # Remove hardcoded type='market_risk' assignment
+                    if signal_type and signal_type != current_type:
+                        update_query = sa_text("""
                             UPDATE signals
-                               SET type = 'market_risk',
+                               SET type = :type,
                                    goplus_risk = :risk,
                                    buy_tax = :buy_tax,
                                    sell_tax = :sell_tax,
                                    lp_lock_days = :lp_lock_days,
                                    honeypot = :honeypot
                              WHERE id = :id
-                        """),
-                        {
+                        """)
+                        params = {
+                            "id": signal_id,
+                            "type": signal_type,
+                            "risk": security_result.risk_label,
+                            "buy_tax": security_result.buy_tax,
+                            "sell_tax": security_result.sell_tax,
+                            "lp_lock_days": security_result.lp_lock_days,
+                            "honeypot": security_result.honeypot,
+                        }
+                    else:
+                        update_query = sa_text("""
+                            UPDATE signals
+                               SET goplus_risk = :risk,
+                                   buy_tax = :buy_tax,
+                                   sell_tax = :sell_tax,
+                                   lp_lock_days = :lp_lock_days,
+                                   honeypot = :honeypot
+                             WHERE id = :id
+                        """)
+                        params = {
                             "id": signal_id,
                             "risk": security_result.risk_label,
                             "buy_tax": security_result.buy_tax,
                             "sell_tax": security_result.sell_tax,
                             "lp_lock_days": security_result.lp_lock_days,
                             "honeypot": security_result.honeypot,
-                        },
-                    )
+                        }
+
+                    conn.execute(update_query, params)
                     # 回填 2：events（证据字段，JSONB）
                     conn.execute(
                         sa_text("""

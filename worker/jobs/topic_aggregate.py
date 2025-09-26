@@ -1,199 +1,214 @@
 import os
-import json
-import hashlib
+import time
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Any
-from collections import defaultdict
 
-from celery import Celery
-from api.database import get_db
-from api.cache import get_redis_client
-from api.core.metrics_store import log_json, timeit
-from api.services.topic_analyzer import TopicAnalyzer
 from sqlalchemy import text as sa_text
+from sqlalchemy.exc import SQLAlchemyError
 
-app = Celery('worker')
-app.config_from_object('celeryconfig')
+from worker.app import app
+from api.database import build_engine_from_env, get_sessionmaker
+from api.core.metrics_store import log_json
+
+
+def get_db_session():
+    """Get database session consistent with other worker jobs"""
+    engine = build_engine_from_env()
+    SessionLocal = get_sessionmaker(engine)
+    return SessionLocal()
+
 
 @app.task
-@timeit
 def aggregate_topics():
-    """Aggregate and merge topics over 24h window"""
-    
-    analyzer = TopicAnalyzer()
-    redis = get_redis_client()
-    
-    window_hours = int(os.getenv("TOPIC_WINDOW_HOURS", "24"))
-    daily_cap = int(os.getenv("DAILY_TOPIC_PUSH_CAP", "50"))
-    
+    """
+    24h 窗口内对话题做聚合，输出候选
+    """
+    # Manual timing since @timeit is incompatible with @app.task
+    start_time_perf = time.perf_counter()
+
+    window_hours = int(os.getenv("TOPIC_AGG_WINDOW_HOURS", "24"))
     now = datetime.now(timezone.utc)
     start_time = now - timedelta(hours=window_hours)
-    
-    log_json(stage="topic.aggregate.start", window_hours=window_hours)
-    
+
+    session = get_db_session()
+
     try:
-        # Get all events with topics in window
-        with get_db() as db:
+        # Check database dialect for compatibility
+        if session.bind.dialect.name == "sqlite":
+            # SQLite-compatible query using GROUP_CONCAT
             query = sa_text("""
-                SELECT 
+                SELECT
                     topic_hash,
-                    topic_entities,
-                    COUNT(*) as mention_count,
-                    MAX(last_ts) as latest_ts,
-                    array_agg(DISTINCT evidence_refs) as evidence_links
+                    GROUP_CONCAT(topic_entities, ',') AS all_entities,
+                    COUNT(*) AS mention_count,
+                    MAX(last_ts) AS latest_ts
                 FROM events
                 WHERE last_ts >= :start_time
-                    AND topic_hash IS NOT NULL
-                GROUP BY topic_hash, topic_entities
+                  AND topic_hash IS NOT NULL
+                GROUP BY topic_hash
                 ORDER BY mention_count DESC
             """)
-            
-            results = db.execute(query, {"start_time": start_time}).fetchall()
-            
-            # Group topics for merging
-            topic_groups = []
-            merged_topics = set()
-            
-            for row in results:
-                topic_id = row["topic_hash"]
-                
-                if topic_id in merged_topics:
-                    continue
-                
-                # Parse entities
-                entities = json.loads(row["topic_entities"]) if row["topic_entities"] else []
-                
-                if not entities:
-                    continue
-                
-                # Check if should merge with existing group
-                merged = False
-                for group in topic_groups:
-                    should_merge, merge_type = analyzer._check_similarity(
-                        entities, 
-                        group["entities"]
-                    )
-                    
-                    if should_merge:
-                        # Merge into group
-                        group["mention_count"] += row["mention_count"]
-                        group["topics"].append(topic_id)
-                        group["latest_ts"] = max(group["latest_ts"], row["latest_ts"])
-                        group["evidence_links"].extend(row["evidence_links"] or [])
-                        merged_topics.add(topic_id)
-                        merged = True
-                        
-                        log_json(
-                            stage="topic.merge",
-                            merge_type=merge_type,
-                            topic_id=topic_id,
-                            group_id=group["topic_id"]
-                        )
-                        break
-                
-                if not merged:
-                    # Create new group
-                    topic_groups.append({
-                        "topic_id": topic_id,
-                        "entities": entities,
-                        "mention_count": row["mention_count"],
-                        "topics": [topic_id],
-                        "latest_ts": row["latest_ts"],
-                        "evidence_links": row["evidence_links"] or []
-                    })
-            
-            # Sort by mention count and apply daily cap
-            topic_groups.sort(key=lambda x: x["mention_count"], reverse=True)
-            
-            # Store aggregated topics for push
-            push_candidates = []
-            
-            for i, group in enumerate(topic_groups[:daily_cap]):
-                # Check rate limit (1 hour per topic)
-                rate_key = f"topic:pushed:{group['topic_id']}"
-                
-                if redis and redis.exists(rate_key):
-                    log_json(
-                        stage="topic.ratelimit",
-                        topic_id=group["topic_id"],
-                        skipped=True
-                    )
-                    continue
-                
-                push_candidates.append(group)
-                
-                # Set rate limit
-                if redis:
-                    redis.setex(rate_key, 3600, "1")  # 1 hour TTL
-                
-                # Store in Redis for push job
-                if redis:
-                    push_key = f"topic:push:candidate:{group['topic_id']}"
-                    redis.setex(
-                        push_key, 
-                        3600,  # 1 hour TTL
-                        json.dumps({
-                            "topic_id": group["topic_id"],
-                            "entities": group["entities"],
-                            "mention_count": group["mention_count"],
-                            "evidence_links": group["evidence_links"][:3]
-                        })
-                    )
-            
-            # Handle overflow (digest)
-            if len(topic_groups) > daily_cap:
-                digest_topics = topic_groups[daily_cap:]
-                digest_key = f"topic:digest:{now.strftime('%Y%m%d')}"
-                
-                if redis:
-                    redis.setex(
-                        digest_key,
-                        86400,  # 24 hour TTL
-                        json.dumps([
-                            {
-                                "topic_id": g["topic_id"],
-                                "entities": g["entities"],
-                                "mention_count": g["mention_count"]
-                            }
-                            for g in digest_topics[:20]  # Limit digest to 20 items
-                        ])
-                    )
-                
-                log_json(
-                    stage="topic.digest",
-                    count=len(digest_topics),
-                    date=now.strftime('%Y%m%d')
-                )
-            
-            # Update topic mention time series in Redis
-            for group in topic_groups:
-                if redis:
-                    ts_key = f"topic:mentions:{group['topic_id']}:{now.isoformat()}"
-                    redis.setex(ts_key, 86400, str(group["mention_count"]))
-            
-            log_json(
-                stage="topic.aggregate.done",
-                total_topics=len(results),
-                merged_groups=len(topic_groups),
-                push_candidates=len(push_candidates),
-                capped_at=daily_cap
-            )
-            
-            # Trigger push job for candidates
-            if push_candidates:
-                from worker.jobs.push_topic_candidates import push_topic_to_telegram
-                for candidate in push_candidates:
-                    push_topic_to_telegram.delay(candidate["topic_id"])
-            
-            return {
-                "success": True,
-                "groups": len(topic_groups),
-                "candidates": len(push_candidates)
+        else:
+            # PostgreSQL query using ARRAY_AGG
+            query = sa_text("""
+                SELECT
+                    topic_hash,
+                    ARRAY_AGG(DISTINCT topic_entities) FILTER (WHERE topic_entities IS NOT NULL) AS all_entities,
+                    COUNT(*) AS mention_count,
+                    MAX(last_ts) AS latest_ts
+                FROM events
+                WHERE last_ts >= :start_time
+                  AND topic_hash IS NOT NULL
+                GROUP BY topic_hash
+                ORDER BY mention_count DESC
+            """)
+
+        # Must use .mappings() for dict-style access
+        rows = session.execute(query, {"start_time": start_time}).mappings().fetchall()
+
+        merged_topics = {}
+        empty_entities_groups = 0
+
+        for row in rows:
+            topic_id = row["topic_hash"]
+            if topic_id in merged_topics:
+                continue
+
+            entities = set()
+
+            if session.bind.dialect.name == "sqlite":
+                # SQLite: GROUP_CONCAT returns concatenated JSON arrays as string
+                if row["all_entities"]:
+                    import json
+                    # GROUP_CONCAT joins with comma, but JSON arrays also have commas
+                    # So we get something like: ["pepe","gem"],["pepe"]
+                    # Need to split carefully
+                    raw_str = row["all_entities"]
+
+                    # Try to parse as single JSON array first
+                    try:
+                        parsed = json.loads(raw_str)
+                        if isinstance(parsed, list):
+                            for e in parsed:
+                                if e:
+                                    entities.add(str(e).strip())
+                    except (json.JSONDecodeError, TypeError):
+                        # If that fails, try splitting on ],[ boundaries
+                        # Add brackets back to make valid JSON
+                        parts = raw_str.replace('],[', ']|||[').split('|||')
+                        for part in parts:
+                            part = part.strip()
+                            if not part:
+                                continue
+                            # Ensure it has brackets
+                            if not part.startswith('['):
+                                part = '[' + part
+                            if not part.endswith(']'):
+                                part = part + ']'
+                            try:
+                                parsed = json.loads(part)
+                                if isinstance(parsed, list):
+                                    for e in parsed:
+                                        if e:
+                                            entities.add(str(e).strip())
+                            except (json.JSONDecodeError, TypeError):
+                                # Last resort: treat as plain string
+                                entities.add(part)
+            else:
+                # PostgreSQL: Process array of arrays
+                raw_groups = row["all_entities"] or []
+                for group in raw_groups:
+                    if not group:
+                        continue
+                    # group is a list/tuple of entities
+                    for ent in group:
+                        if ent is not None:
+                            s = str(ent).strip()
+                            if s:
+                                entities.add(s)
+
+            # Convert set to sorted list
+            entities = sorted(entities)
+
+            if not entities:
+                empty_entities_groups += 1
+                continue
+
+            merged_topics[topic_id] = {
+                "topic_id": topic_id,
+                "entities": entities,
+                "mention_count": int(row["mention_count"]),
+                "latest_ts": row["latest_ts"],
+                # 下游如依赖该字段：给出空列表占位，避免 KeyError
+                "evidence_links": []
             }
-            
-    except Exception as e:
-        log_json(
-            stage="topic.aggregate.error",
-            error=str(e)
-        )
+
+        candidates = list(merged_topics.values())
+
+        # Push high-quality topics to Telegram (强耦合上线版)
+        from api.cache import get_redis_client
+        from worker.jobs.push_topic_candidates import format_topic_message, push_to_telegram
+
+        push_enabled = os.getenv("TOPIC_PUSH_ENABLED", "true").lower() == "true"
+        min_mentions = int(os.getenv("TOPIC_PUSH_MIN_MENTIONS", "3"))
+        cooldown = int(os.getenv("TOPIC_PUSH_COOLDOWN_SEC", "3600"))
+        redis = get_redis_client()
+
+        if push_enabled and redis:
+            for c in candidates:
+                log_json(stage="topic.push.consider", topic_id=c["topic_id"], mention_count=c["mention_count"])
+
+                if c["mention_count"] < min_mentions:
+                    log_json(stage="topic.push.skipped_threshold", topic_id=c["topic_id"], min_mentions=min_mentions)
+                    continue
+
+                dedup_key = f"topic:dedup:{c['topic_id']}"
+                if redis.get(dedup_key):
+                    log_json(stage="topic.push.skipped_dedup", topic_id=c["topic_id"])
+                    continue
+
+                # 先占坑再推送，避免并发双发
+                try:
+                    redis.setex(dedup_key, cooldown, "1")
+                except Exception as e:
+                    log_json(stage="topic.push.redis.error", topic_id=c["topic_id"], error=str(e))
+                    # 不阻断；继续尝试推送，但这会失去去重保护
+
+                try:
+                    text = format_topic_message(c)
+                    push_to_telegram(text)  # 同步调用
+                    log_json(stage="topic.push.sent", topic_id=c["topic_id"])
+                except Exception as e:
+                    log_json(stage="topic.push.error", topic_id=c["topic_id"], error=str(e))
+                    # 发送失败可考虑释放去重坑（可选）
+                    try:
+                        redis.delete(dedup_key)
+                    except Exception:
+                        pass
+
+        result = {
+            "success": True,
+            "window_hours": window_hours,
+            "groups": len(merged_topics),
+            "empty_entities_groups": empty_entities_groups,
+            "candidates": candidates,
+        }
+
+        # Log metrics (exclude candidates to avoid log bloat)
+        log_json(stage="topic.aggregate.done", **{k: v for k, v in result.items() if k != "candidates"})
+
+        # Log execution time
+        elapsed_ms = int((time.perf_counter() - start_time_perf) * 1000)
+        log_json(stage="topic.aggregate.timing", elapsed_ms=elapsed_ms)
+
+        return result
+
+    except SQLAlchemyError as e:
+        log_json(stage="topic.aggregate.error", error=str(e))
+
+        # Log execution time even on failure
+        elapsed_ms = int((time.perf_counter() - start_time_perf) * 1000)
+        log_json(stage="topic.aggregate.timing", elapsed_ms=elapsed_ms)
+
         return {"success": False, "error": str(e)}
+    finally:
+        session.close()

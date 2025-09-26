@@ -89,39 +89,36 @@ def push_topic_to_telegram(topic_id: str):
         )
         return {"success": False, "error": str(e)}
 
-def format_topic_message(candidate: Dict[str, Any]) -> str:
-    """Format topic candidate as Telegram message"""
-    
-    entities = candidate.get("entities", [])
-    mention_count = candidate.get("mention_count", 0)
-    evidence_links = candidate.get("evidence_links", [])
-    
-    # Build message
-    lines = [
-        "🔥 *Trending Topic Alert*",
-        "",
-        f"📊 Topic: {', '.join(entities)}",
-        f"📈 Mentions (24h): {mention_count}",
-        ""
-    ]
-    
-    # Add evidence links
-    if evidence_links:
-        lines.append("🔗 Recent Posts:")
-        for i, link in enumerate(evidence_links[:3], 1):
-            lines.append(f"  {i}. {link}")
-        lines.append("")
-    
-    # Add warning
-    lines.extend([
-        "⚠️ *Disclaimer:*",
-        "_This is a trending topic alert. Not financial advice._",
-        "_未落地为币，谨防仿冒_",
-        "",
-        f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
-    ])
-    
-    return "\n".join(lines)
+def format_topic_message(c: Dict[str, Any]) -> str:
+    """Format topic candidate into Telegram message - minimal version"""
+    ents = c.get("entities") or []
+    ents_show = ", ".join(ents[:5]) if ents else "(无)"
+    latest_iso = (c.get("latest_ts") or "").isoformat() if hasattr(c.get("latest_ts"), "isoformat") else str(c.get("latest_ts", ""))
+    return (
+        f"🔥 热点话题：{ents_show}\n"
+        f"📊 24h 提及：{c.get('mention_count', 0)}\n"
+        f"🏷️ 实体：{ents_show}\n"
+        f"🕒 最新：{latest_iso}"
+    )
+
+def push_to_telegram(text: str) -> Dict[str, Any]:
+    """Direct push to Telegram using existing notifier"""
+    notifier = TelegramNotifier()
+    chat_id = os.getenv("TELEGRAM_TOPIC_CHAT_ID") or os.getenv("TELEGRAM_SANDBOX_CHAT_ID")
+
+    if not chat_id:
+        raise ValueError("TELEGRAM_TOPIC_CHAT_ID not configured")
+
+    result = notifier.send_message(
+        chat_id=chat_id,
+        text=text,
+        parse_mode="HTML"
+    )
+
+    if not result.get("success"):
+        raise Exception(f"Telegram send failed: {result.get('error')}")
+
+    return result
 
 @app.task
 def push_topic_digest():

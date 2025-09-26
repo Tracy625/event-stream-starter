@@ -231,3 +231,14 @@ cards_pipeline_latency_ms = histogram(
     "Card generation pipeline latency",
     [50, 100, 200, 500, 1000, 2000, 5000]
 )
+
+# Market risk detection metrics - centralized registration
+rules_market_risk_hits_total = counter(
+    "rules_market_risk_hits_total",
+    "Market risk rules hit count by rule_id"
+)
+
+signals_type_set_total = counter(
+    "signals_type_set_total",
+    "Signals type set count by type"
+)

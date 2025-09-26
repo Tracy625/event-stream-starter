@@ -4,7 +4,7 @@ import json
 import re
 from typing import Dict, Any, Tuple, List
 
-from api.core.metrics_store import log_json, timeit
+from api.core.metrics_store import log_json
 from api.cache import get_redis_client
 
 class MemeableTopicDetector:
@@ -15,13 +15,13 @@ class MemeableTopicDetector:
         self.mini_llm_timeout = int(os.getenv("MINI_LLM_TIMEOUT_MS", "1200"))
         self.redis = get_redis_client()
         
-    @timeit
     def is_memeable(self, text: str, metadata: Dict[str, Any] = None) -> Tuple[bool, List[str], float]:
         """
         Check if text contains memeable topic
         Returns: (is_meme, entities, confidence)
         """
-        
+        t0 = time.perf_counter()
+
         # Try KeyBERT extraction first
         entities = []
         confidence = 0.0
@@ -50,7 +50,11 @@ class MemeableTopicDetector:
             confidence=confidence,
             backend=self.backend
         )
-        
+
+        # Record timing
+        t_ms = int((time.perf_counter() - t0) * 1000)
+        log_json(stage="topic.is_memeable.timing", elapsed_ms=t_ms)
+
         return is_meme, entities, confidence
     
     def _extract_with_keybert(self, text: str) -> Tuple[List[str], float]:

@@ -1,0 +1,56 @@
+{#- Market Risk Card Template for UI (HTML) -#}
+{%- set risk = card_data.goplus_risk | default(card_data.risk_level) | default('gray') -%}
+<div class="card market-risk-card">
+  <div class="card-header">
+    {% if risk == 'red' %}
+    <span class="badge badge-danger">🔴 高风险警报</span>
+    {% elif risk == 'yellow' %}
+    <span class="badge badge-warning">🟡 中风险提示</span>
+    {% elif risk == 'gray' %}
+    <span class="badge badge-secondary">⚫ 服务降级</span>
+    {% else %}
+    <span class="badge badge-success">🟢 低风险信号</span>
+    {% endif %}
+  </div>
+
+  {% if card_data.token_info %}
+  <div class="token-info">
+    <strong>候选代币:</strong> {{ card_data.token_info.symbol | default('UNKNOWN') }} ({{ card_data.token_info.chain | default('eth') | upper }})
+    {% if card_data.token_info.ca_norm %}
+    <br><strong>合约地址:</strong> <code>{{ card_data.token_info.ca_norm[:6] }}...{{ card_data.token_info.ca_norm[-4:] }}</code>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if card_data.risk_note %}
+  <div class="alert alert-warning">
+    ⚠️ <strong>风险提示:</strong> {{ card_data.risk_note }}
+  </div>
+  {% endif %}
+
+  <div class="security-assessment">
+    <h4>🛡️ 安全评估</h4>
+    <ul>
+      <li><strong>GoPlus风险:</strong>
+        {% if risk == 'red' %}🔴 高风险{% elif risk == 'yellow' %}🟡 中风险{% elif risk == 'green' %}🟢 低风险{% else %}⚫ 未知{% endif %}
+      </li>
+      <li><strong>买入税:</strong> {{ "%.1f%%" | format(card_data.buy_tax) if card_data.buy_tax is defined else "-" }}</li>
+      <li><strong>卖出税:</strong> {{ "%.1f%%" | format(card_data.sell_tax) if card_data.sell_tax is defined else "-" }}</li>
+      <li><strong>LP锁定:</strong> {{ "%d 天" | format(card_data.lp_lock_days) if card_data.lp_lock_days is defined and card_data.lp_lock_days > 0 else "未锁定" }}</li>
+      <li><strong>蜜罐检测:</strong> {% if card_data.honeypot is defined %}{{ "是" if card_data.honeypot else "否" }}{% else %}未知{% endif %}</li>
+      <li><strong>安全源:</strong> {{ card_data.sources.security_source if card_data.sources is defined and card_data.sources.security_source is defined else card_data.risk_source | default('-') }}</li>
+    </ul>
+  </div>
+
+  {% if card_data.states is defined and card_data.states.degrade %}
+  <div class="alert alert-warning">
+    ⚠️ <strong>服务降级提示:</strong> 部分数据服务暂时不可用，显示结果基于缓存或降级策略
+  </div>
+  {% endif %}
+
+  <div class="card-footer">
+    <p>🔍 <strong>验证路径:</strong> {{ card_data.verify_path | default('/') }}</p>
+    <p>📅 <strong>数据时间:</strong> {{ card_data.data_as_of | default('N/A') }}</p>
+    <p class="legal-note"><em>{{ card_data.legal_note | default("本信息仅为风险线索与技术判断，不构成投资建议。") }}</em></p>
+  </div>
+</div>

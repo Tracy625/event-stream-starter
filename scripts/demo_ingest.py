@@ -31,11 +31,21 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import pipeline modules
 from api.filter import filters_text, analyze_sentiment
-from api.refine import refine_post
+from api.refiner import RulesRefiner
 from api.dedup import DeduplicationService
-from api.db import insert_raw_post, with_session
+
+# Import db functions directly from the module file
+import importlib.util
+spec = importlib.util.spec_from_file_location("api_db_module", "api/db.py")
+api_db_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(api_db_module)
+insert_raw_post = api_db_module.insert_raw_post
+with_session = api_db_module.with_session
+
 from api.database import build_engine_from_env, get_sessionmaker
-from api.metrics import log_json as metrics_log_json
+from api.core.metrics_store import log_json as metrics_log_json
+from worker.pipeline.is_memeable_topic import MemeableTopicDetector
+from api.services.topic_analyzer import TopicAnalyzer
 
 
 def get_sample_posts() -> List[Dict[str, Any]]:
@@ -99,7 +109,9 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
         "db_inserted": False,
         "raw_post_id": None,
         "event_upserted": False,
-        "timings": {}
+        "timings": {},
+        "topic_detected": False,
+        "topic_id": None
     }
     
     text = post["text"]
@@ -153,19 +165,38 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
     # Step 2: Refine with timing
     refine_start = time.perf_counter()
     refine_backend = "rules"
-    
-    refined = refine_post(text)
-    event_key = refined["event_key"]
+
+    # Use RulesRefiner from api.refiner
+    refiner = RulesRefiner()
+    refined_result = refiner.refine([text])  # Pass as list of evidence texts
+
+    # Map fields from refiner output to expected format
+    # Generate event_key from text hash
+    import hashlib
+    text_hash = hashlib.sha256(text.encode()).hexdigest()[:12]
+    event_key = f"EVENT:{text_hash}"
+
+    refined = {
+        "event_key": event_key,
+        "type": refined_result.get("type", "market-update"),
+        "score": refined_result.get("confidence", 0.5),
+        "keywords": refined_result.get("impacted_assets", []),
+        "assets": {
+            "symbol": refined_result.get("impacted_assets", [None])[0] if refined_result.get("impacted_assets") else None,
+            "ca": None  # Refiner doesn't extract contract addresses
+        }
+    }
+
     result["event_key"] = event_key
-    
+
     refine_ms = int(round((time.perf_counter() - refine_start) * 1000))
     result["timings"]["t_refine_ms"] = refine_ms
-    
+
     # Check if refine exceeded budget
     if refine_ms > budget_refine:
         refine_backend = "rules"  # Force degradation
         metrics_log_json(stage="degradation", phase="refine", exceeded_ms=refine_ms, budget_ms=budget_refine, backend="rules")
-    
+
     print(f"[REFINE] Generated event_key: {event_key}, type: {refined['type']}, score: {refined['score']:.2f}")
     
     # Step 3: Dedup with timing
@@ -182,18 +213,53 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
     
     dedup_ms = int(round((time.perf_counter() - dedup_start) * 1000))
     result["timings"]["t_dedup_ms"] = dedup_ms
-    
+
+    # Step 3.5: Topic Detection (before event aggregation)
+    print("[TOPIC] Starting topic detection...")
+    topic_start = time.perf_counter()
+    topic_hash_override = None
+    topic_entities = None
+
+    try:
+        detector = MemeableTopicDetector()
+        is_meme, entities, confidence = detector.is_memeable(text, {"author": post["author"]})
+
+        if is_meme and entities:
+            analyzer = TopicAnalyzer()
+
+            # Use private method since no public method exists
+            if hasattr(analyzer, '_generate_topic_id'):
+                topic_id = analyzer._generate_topic_id(entities)
+                topic_hash_override = topic_id
+                topic_entities = entities  # Keep as list
+
+                result["topic_detected"] = True
+                result["topic_id"] = topic_id
+
+                metrics_log_json(stage="topic.detected", topic_id=topic_id, entities=entities, confidence=confidence)
+                print(f"[TOPIC] Detected memeable topic: {entities} -> {topic_id}")
+            else:
+                metrics_log_json(stage="topic.detection.error", error="TopicAnalyzer has no _generate_topic_id method")
+    except Exception as e:
+        metrics_log_json(stage="topic.detection.error", error=str(e))
+        # Continue processing even if topic detection fails
+
+    topic_ms = int(round((time.perf_counter() - topic_start) * 1000))
+    result["timings"]["t_topic_ms"] = topic_ms
+
     # Step 4: Event aggregation (NEW)
     # Always aggregate events - duplicates increase evidence_count
     event_start = time.perf_counter()
     event_result = None
     event_aggregated = False
-    
+
     # Event aggregation MUST come from api.events (avoid name clash with api.db)
     from api.events import upsert_event as events_upsert_event
-    
-    # Build enriched post dict for event aggregation
+
+    # Build enriched post dict for event aggregation (include required type/text for key)
     enriched_post = {
+        "type": refined.get("type", "market-update"),
+        "text": text,
         "symbol": refined.get("assets", {}).get("symbol"),
         "token_ca": refined.get("assets", {}).get("ca"),
         "keywords": refined.get("keywords", []),
@@ -201,6 +267,11 @@ def process_post(post: Dict[str, Any], dedup_service: DeduplicationService, Sess
         "sentiment_score": sentiment_score,
         "created_ts": post["ts"]
     }
+
+    # Add topic data if detected (will be written to DB)
+    if topic_hash_override:
+        enriched_post["topic_hash"] = topic_hash_override
+        enriched_post["topic_entities"] = topic_entities
     
     try:
         # Always perform event aggregation (even for duplicates - increases evidence_count)

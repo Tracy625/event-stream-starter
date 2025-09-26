@@ -16,10 +16,11 @@ from sqlalchemy.orm import sessionmaker
 # from sqlalchemy.dialects.postgresql import insert  # not used
 
 # Import from api modules (package imports already available in container PYTHONPATH)
-from api.clients.x_client import get_x_client
+from api.clients.x_client import get_x_client, get_x_client_from_env
 from api.normalize.x import normalize_tweet
 from api.core.metrics_store import log_json
 from api.models import Base, RawPost
+from api.cache import get_redis_client
 
 
 def get_redis_client() -> Optional[redis.Redis]:
@@ -188,15 +189,29 @@ def run_once() -> Dict[str, int]:
         "dedup_hit": 0,
         "inserted": 0
     }
+    # Simple job-level cooldown to avoid concurrent runs
+    try:
+        rc = get_redis_client()
+        cooldown = int(os.getenv("X_JOB_COOLDOWN_SEC", "60"))
+        if rc is not None and cooldown > 0:
+            if not rc.set("x:job:kol:lock", b"1", ex=cooldown, nx=True):
+                log_json(stage="x.poll.skip", reason="cooldown_lock")
+                return stats
+    except Exception:
+        pass
     
     # Load configuration
     handles = load_kol_handles()
     if not handles:
         return stats
     
-    # Get clients
-    backend = os.getenv("X_BACKEND", "graphql")
-    x_client = get_x_client(backend)
+    # Get clients: prefer multi-source via X_BACKENDS
+    backends = os.getenv("X_BACKENDS", "").strip()
+    if backends:
+    x_client = get_x_client_from_env()
+    else:
+        backend = os.getenv("X_BACKEND", "graphql")
+        x_client = get_x_client(backend)
     redis_client = get_redis_client()
     
     # Process each handle

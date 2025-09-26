@@ -20,6 +20,7 @@ _salt_warning_shown = False
 
 
 _events_tbl_cache = None
+_columns_filter_warned = False
 
 
 def _events_table(engine):
@@ -624,7 +625,10 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
     
     # Extract fields
     keywords_norm = _extract_topic_keywords(post, topk)
-    topic_hash = _compute_topic_hash(keywords_norm, hash_algo)
+    # Use provided topic_hash if available, otherwise compute from keywords
+    topic_hash = post.get('topic_hash') or _compute_topic_hash(keywords_norm, hash_algo)
+    # Get topic_entities if provided
+    topic_entities = post.get('topic_entities', None)
     
     # Get timestamps
     created_ts = post.get("created_ts")
@@ -743,56 +747,94 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
     
     events = _events_table(engine)
     
-    # Build insert statement with evidence and GoPlus fields
-    ins = pg_insert(events).values(
-        event_key=event_key,
-        symbol=symbol,
-        token_ca=token_ca,
-        topic_hash=topic_hash,
-        time_bucket_start=time_bucket_start,
-        start_ts=created_ts,
-        last_ts=created_ts,
-        evidence_count=len(new_evidence) if new_evidence else 1,
-        candidate_score=candidate_score,
-        keywords_norm=keywords_jsonb,
-        version=version,
-        last_sentiment=last_sentiment,
-        last_sentiment_score=last_sentiment_score,
-        goplus_risk=goplus_risk,
-        buy_tax=buy_tax,
-        sell_tax=sell_tax,
-        lp_lock_days=lp_lock_days,
-        honeypot=honeypot,
-        evidence=evidence_jsonb
-    )
-    
+    # Build insert statement values (will filter by actual table columns below)
+    insert_values = {
+        "event_key": event_key,
+        "symbol": symbol,
+        "token_ca": token_ca,
+        "topic_hash": topic_hash,
+        "time_bucket_start": time_bucket_start,
+        "start_ts": created_ts,
+        "last_ts": created_ts,
+        "evidence_count": len(new_evidence) if new_evidence else 1,
+        "candidate_score": candidate_score,
+        "keywords_norm": keywords_jsonb,
+        "version": version,
+        "last_sentiment": last_sentiment,
+        "last_sentiment_score": last_sentiment_score,
+        "goplus_risk": goplus_risk,
+        "buy_tax": buy_tax,
+        "sell_tax": sell_tax,
+        "lp_lock_days": lp_lock_days,
+        "honeypot": honeypot,
+        "evidence": evidence_jsonb,
+    }
+
+    # Determine existing columns to avoid referencing non-existent fields
+    existing_cols = {c.name for c in events.columns}
+
+    # Keep a snapshot of intended insert keys for diagnostics
+    intended_insert_keys = set(insert_values.keys())
+
+    # Add topic_entities only if provided and column exists
+    if topic_entities is not None and "topic_entities" in existing_cols:
+        insert_values["topic_entities"] = topic_entities
+
+    # Keep only keys that exist in the table
+    filtered_insert_values = {k: v for k, v in insert_values.items() if k in existing_cols}
+
+    # One-time warning if any intended columns were filtered out (schema drift)
+    global _columns_filter_warned
+    missing_insert_cols = sorted(list(intended_insert_keys - existing_cols))
+    if missing_insert_cols and not _columns_filter_warned:
+        log_json(
+            stage="events.upsert.columns.filtered",
+            missing_insert=missing_insert_cols,
+            existing_cols_count=len(existing_cols)
+        )
+        _columns_filter_warned = True
+
+    # Use filtered values for insert
+    insert_values = filtered_insert_values
+
+    ins = pg_insert(events).values(**insert_values)
+
     # Build upsert statement with ON CONFLICT - now handles evidence array merge
     # Note: This is a simplified version. In production, we'd need to fetch existing
     # evidence and use merge_event_evidence() for proper deduplication
-    stmt = ins.on_conflict_do_update(
-        index_elements=[events.c.event_key],
-        set_={
-            "last_ts": func.greatest(events.c.last_ts, ins.excluded.last_ts),
-            "evidence_count": sa_text(
-                "CASE WHEN events.evidence IS NULL THEN COALESCE(array_length(excluded.evidence::json[], 1), 1) "
-                "ELSE events.evidence_count + COALESCE(array_length(excluded.evidence::json[], 1), 1) END"
-            ),
-            "last_sentiment": ins.excluded.last_sentiment,
-            "last_sentiment_score": ins.excluded.last_sentiment_score,
-            "candidate_score": ins.excluded.candidate_score,
-            "goplus_risk": ins.excluded.goplus_risk,
-            "buy_tax": ins.excluded.buy_tax,
-            "sell_tax": ins.excluded.sell_tax,
-            "lp_lock_days": ins.excluded.lp_lock_days,
-            "honeypot": ins.excluded.honeypot,
-            # Merge evidence arrays (concat, dedup happens in app layer)
-            "evidence": sa_text(
-                "CASE WHEN events.evidence IS NULL THEN excluded.evidence "
-                "WHEN excluded.evidence IS NULL THEN events.evidence "
-                "ELSE events.evidence || excluded.evidence END"
-            )
-        }
-    )
+    update_set = {}
+    if "last_ts" in existing_cols:
+        update_set["last_ts"] = func.greatest(events.c.last_ts, ins.excluded.last_ts)
+    if "evidence_count" in existing_cols:
+        update_set["evidence_count"] = sa_text(
+            "CASE WHEN events.evidence IS NULL THEN "
+            "  CASE WHEN jsonb_typeof(excluded.evidence) = 'array' THEN jsonb_array_length(excluded.evidence) ELSE 1 END "
+            "ELSE events.evidence_count + "
+            "  CASE WHEN jsonb_typeof(excluded.evidence) = 'array' THEN jsonb_array_length(excluded.evidence) ELSE 1 END "
+            "END"
+        )
+    # Optional fields: only set if column exists
+    for col in [
+        "last_sentiment",
+        "last_sentiment_score",
+        "candidate_score",
+        "goplus_risk",
+        "buy_tax",
+        "sell_tax",
+        "lp_lock_days",
+        "honeypot",
+    ]:
+        if col in existing_cols:
+            update_set[col] = getattr(ins.excluded, col)
+    # Merge evidence arrays (concat) only if column exists
+    if "evidence" in existing_cols:
+        update_set["evidence"] = sa_text(
+            "CASE WHEN events.evidence IS NULL THEN excluded.evidence "
+            "WHEN excluded.evidence IS NULL THEN events.evidence "
+            "ELSE events.evidence || excluded.evidence END"
+        )
+
+    stmt = ins.on_conflict_do_update(index_elements=[events.c.event_key], set_=update_set)
     
     # Execute with transaction
     with engine.begin() as conn:

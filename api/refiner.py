@@ -4,7 +4,7 @@ from typing import List, Optional, Callable, Sequence, Dict, Any
 from pydantic import ValidationError
 from openai import OpenAI
 from .schemas.refine_schema import RefineModel
-from .metrics import log_json, timeit
+from .core.metrics_store import log_json, timeit
 from .cache import memoize_ttl
 
 # 兼容不同实现的 memoize_ttl：支持 kw/positional，实在不行就退化为 no-op

@@ -1,53 +1,19 @@
-# Risk rules for offline/degraded mode evaluation
-# Extended for Day9.2 Primary card gate enforcement
+# touch to bump version
+# Risk rules configuration for GoPlus security evaluation
+# Used by api/security/goplus.py and api/providers/goplus_provider.py
 
-# Blacklisted addresses (always red)
-blacklist:
-  - "0x0000000000000000000000000000000000000000"
-  - "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-  - "0xbad0000000000000000000000000000000000000"
+# GoPlus API version
+goplus_version: "GoPlus@v1.2"
 
-# Whitelisted addresses (always green)
-whitelist:
-  - "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
-  - "0xdac17f958d2ee523a2206206994597c13d831ec7"  # USDT
-  - "0x6b175474e89094c44da98b954eedeac495271d0f"  # DAI
+# Risk thresholds
+RISK_TAX_RED: 10
+RISK_LP_YELLOW_DAYS: 30
+HONEYPOT_RED: true
+RISK_MIN_CONFIDENCE: 0.6
 
-# Known honeypot patterns
-honeypot_patterns:
-  - "safemoon"
-  - "babydoge"
-  - "floki"
+# Additional risk parameters
+max_risk_score: 100
+min_risk_score: 0
 
-# Risk thresholds - defines red/yellow/green classification
-risk_thresholds:
-  # Red triggers (critical risks)
-  honeypot_red: true        # honeypot=true -> red
-  buy_tax_red: 10           # buy_tax > 10% -> red
-  sell_tax_red: 10          # sell_tax > 10% -> red
-  
-  # Yellow triggers (warnings)
-  lp_lock_yellow_days: 30   # lp_lock_days < 30 -> yellow
-  buy_tax_yellow: 5         # buy_tax > 5% -> yellow (if not already red)
-  sell_tax_yellow: 5        # sell_tax > 5% -> yellow (if not already red)
-  
-  # Gray triggers (degraded state)
-  goplus_error_gray: true   # GoPlus status in {timeout,error} -> gray
-  
-# Degradation behavior
-degradation:
-  # When GoPlus is unavailable
-  on_timeout:
-    risk_color: "gray"
-    risk_note: "体检暂不可用，已降级"
-    forbid_green: true
-  on_error:
-    risk_color: "gray"
-    risk_note: "体检服务异常，已降级"
-    forbid_green: true
-    
-# Default risk for unknown tokens
-default_risk: "yellow"
-
-# Version tracking for risk_source field
-goplus_version: "v1.2"
+# Default risk labels
+default_risk: "unknown"

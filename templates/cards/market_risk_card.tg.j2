@@ -1,0 +1,41 @@
+{#- Market Risk Card Template for Telegram (Markdown) -#}
+{#- Risk color header based on goplus_risk or risk_level -#}
+{%- set risk = card_data.goplus_risk | default(card_data.risk_level) | default('gray') -%}
+{%- if risk == 'red' -%}
+🔴 **高风险警报**
+{%- elif risk == 'yellow' -%}
+🟡 **中风险提示**
+{%- elif risk == 'gray' -%}
+⚫ **服务降级**
+{%- else -%}
+🟢 **低风险信号**
+{%- endif %}
+
+{%- if card_data.token_info %}
+**候选代币:** {{ card_data.token_info.symbol | default('UNKNOWN') }} ({{ card_data.token_info.chain | default('eth') | upper }})
+{%- if card_data.token_info.ca_norm %}
+**合约地址:** `{{ card_data.token_info.ca_norm[:6] }}...{{ card_data.token_info.ca_norm[-4:] }}`
+{%- endif %}
+{%- endif %}
+{#- Risk warning block -#}
+{%- if card_data.risk_note %}
+⚠️ **风险提示:** {{ card_data.risk_note }}
+{%- endif %}
+
+🛡️ **安全评估**
+• GoPlus风险: {% if risk == 'red' %}🔴 高风险{% elif risk == 'yellow' %}🟡 中风险{% elif risk == 'green' %}🟢 低风险{% else %}⚫ 未知{% endif %}
+• 买入税: {{ "%.1f%%" | format(card_data.buy_tax) if card_data.buy_tax is defined else "-" }}
+• 卖出税: {{ "%.1f%%" | format(card_data.sell_tax) if card_data.sell_tax is defined else "-" }}
+• LP锁定: {{ "%d 天" | format(card_data.lp_lock_days) if card_data.lp_lock_days is defined and card_data.lp_lock_days > 0 else "未锁定" }}
+• 蜜罐检测: {% if card_data.honeypot is defined %}{{ "是" if card_data.honeypot else "否" }}{% else %}未知{% endif %}
+• 安全源: {{ card_data.sources.security_source if card_data.sources is defined and card_data.sources.security_source is defined else card_data.risk_source | default('-') }}
+
+{#- Degraded state warning -#}
+{%- if card_data.states is defined and card_data.states.degrade %}
+⚠️ **服务降级提示:** 部分数据服务暂时不可用，显示结果基于缓存或降级策略
+{%- endif %}
+
+🔍 **验证路径:** {{ card_data.verify_path | default('/') }}
+📅 **数据时间:** {{ card_data.data_as_of | default('N/A') }}
+{#- Legal note -#}
+_{{ card_data.legal_note | default("本信息仅为风险线索与技术判断，不构成投资建议。") }}_

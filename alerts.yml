@@ -49,3 +49,15 @@ rules:
     severity: error
     notify: default
     description: "Configuration reload errors detected"
+
+  # HTTP 5xx 错误率告警
+  - name: http_5xx_error_rate_high
+    source: metrics
+    expr: error_rate_5xx         # 5xx/(2xx+3xx+4xx+5xx)
+    metric: http_requests_total  # 指标名称
+    threshold: 0.01              # > 1%
+    window_seconds: 300          # 5分钟窗口
+    silence_seconds: 600         # 告警后静默10分钟
+    severity: critical
+    notify: default
+    description: "HTTP 5xx error rate exceeds 1% over 5 minutes"

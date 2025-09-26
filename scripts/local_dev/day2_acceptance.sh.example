@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+COMPOSE="docker compose -f infra/docker-compose.yml"
+PSQL="${COMPOSE} exec -T db psql -U app -d app"
+
+log_section() {
+  printf '\n[%s]\n' "$1"
+}
+
+log_section "1) 准备环境：打开 429 模拟"
+export TELEGRAM_FORCE_429=1
+${COMPOSE} restart worker beat
+
+log_section "2) 插入 30 条待发送消息"
+${PSQL} <<'SQL'
+INSERT INTO push_outbox (channel_id, event_key, payload_json, status)
+SELECT -1003006310940,
+       CONCAT('force429-', g)::text,
+       jsonb_build_object('text', CONCAT('Force 429 demo #', g)),
+       'pending'
+FROM generate_series(1, 30) AS g;
+SQL
+
+log_section "3) 观察 20 秒窗口内的限流日志"
+${COMPOSE} logs --since 20s worker | grep -E "(429|rate limit|Too Many|error_code)" || true
+
+log_section "4) 查看 backlog（pending + retry）"
+${PSQL} -c "SELECT status, COUNT(*) FROM push_outbox GROUP BY status ORDER BY status;"
+curl -s http://localhost:8000/metrics | grep -E 'outbox_backlog|beat_heartbeat'
+
+log_section "5) 关闭 429，等待恢复"
+unset TELEGRAM_FORCE_429
+${COMPOSE} restart worker beat
+sleep 70
+
+log_section "6) 回收后的 backlog 与 DLQ 指标"
+${PSQL} -c "SELECT status, COUNT(*) FROM push_outbox GROUP BY status ORDER BY status;"
+curl -s http://localhost:8000/metrics | grep -E 'outbox_backlog|dlq_(recovered|discarded)|beat_heartbeat'
+
+log_section "7) beat 自愈示例"
+${COMPOSE} exec -T beat python scripts/beat_healthcheck.py || true
+${COMPOSE} stop worker
+sleep 20
+${COMPOSE} ps beat
+${COMPOSE} start worker
+sleep 10
+${COMPOSE} exec -T redis redis-cli GET beat:last_heartbeat
+${COMPOSE} ps beat
