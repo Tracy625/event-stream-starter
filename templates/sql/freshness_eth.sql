@@ -5,6 +5,6 @@
 SELECT
   number AS latest_block,
   timestamp AS data_as_of
-FROM `bigquery-public-data.crypto_ethereum.blocks`
+FROM `{{ BQ_DATASET_RO }}.blocks`
 ORDER BY number DESC
 LIMIT 1

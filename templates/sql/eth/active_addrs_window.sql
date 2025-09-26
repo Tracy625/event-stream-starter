@@ -7,7 +7,7 @@ SELECT
   COUNT(1) AS tx_count,
   COUNT(DISTINCT from_address) AS active_addr_count,
   MAX(block_timestamp) AS data_as_of
-FROM `${BQ_DATASET_RO}.transactions`
+FROM `{{ BQ_DATASET_RO }}.transactions`
 WHERE to_address = @address
   AND block_timestamp BETWEEN @from_ts AND @to_ts
 LIMIT 50000;

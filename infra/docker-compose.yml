@@ -45,7 +45,7 @@ services:
       PYTHONPATH: /app
       POSTGRES_URL: postgresql://app:app@db:5432/app
       REDIS_URL: redis://redis:6379/0
-      SECURITY_BACKEND: goplus
+      SECURITY_BACKEND: ${SECURITY_BACKEND:-goplus}
       
       # Expert endpoint settings
       EXPERT_VIEW: "on"
@@ -96,6 +96,7 @@ services:
     environment:
       POSTGRES_URL: postgresql+psycopg2://app:app@db:5432/app
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      SECURITY_BACKEND: ${SECURITY_BACKEND:-goplus}
       CELERY_BROKER_URL: ${REDIS_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${REDIS_URL:-redis://redis:6379/0}
       PYTHONPATH: /app:/app/worker/src

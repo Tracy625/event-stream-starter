@@ -74,6 +74,34 @@ groups:
         score: 5
         reason: "热度快速攀升"
 
+  - name: "market_volatility"
+    priority: 12
+    rules:
+      - id: "MR01"
+        condition: "dex_volume_1h >= ${MARKET_RISK_VOLUME_THRESHOLD:500000}"
+        score: -15
+        reason: "成交量异常放大（1h ≥$${MARKET_RISK_VOLUME_THRESHOLD:500000}）"
+      - id: "MR02"
+        condition: "dex_liquidity < ${MARKET_RISK_LIQ_MIN:10000}"
+        score: -12
+        reason: "流动性严重不足（<$${MARKET_RISK_LIQ_MIN:10000}）"
+      - id: "MR03"
+        condition: "dex_volume_1h >= ${MARKET_RISK_VOLUME_THRESHOLD:500000} and dex_liquidity < ${MARKET_RISK_LIQ_RISK:50000}"
+        score: -18
+        reason: "高成交量低流动性（潜在拉盘）"
+      - id: "MR04"
+        condition: "heat_slope < -2"
+        score: -8
+        reason: "热度急剧下降"
+      - id: "MR05"
+        condition: "dex_volume_1h >= ${MARKET_RISK_VOLUME_THRESHOLD:500000} and goplus_risk == 'red'"
+        score: -20
+        reason: "高成交量高风险代币"
+      - id: "MR06"
+        condition: "dex_liquidity < ${MARKET_RISK_LIQ_MIN:10000} and sell_tax > 10"
+        score: -16
+        reason: "低流动性高卖出税（疑似蜜罐）"
+
 scoring:
   thresholds:
     opportunity: 15

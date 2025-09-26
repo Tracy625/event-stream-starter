@@ -1,0 +1,43 @@
+{#- Topic Card Template for Telegram (Markdown) -#}
+🔵 **话题信号**
+
+{%- if card_data.token_info %}
+**候选代币:** {{ card_data.token_info.symbol | default('UNKNOWN') }} ({{ card_data.token_info.chain | default('eth') | upper }})
+{%- if card_data.token_info.ca_norm %}
+**合约地址:** `{{ card_data.token_info.ca_norm[:6] }}...{{ card_data.token_info.ca_norm[-4:] }}`
+{%- endif %}
+{%- endif %}
+
+{#- Topic Information -#}
+📌 **话题信息**
+{%- if card_data.topic_id is defined and card_data.topic_id %}
+• 话题ID: {{ card_data.topic_id }}
+{%- endif %}
+{%- if card_data.topic_entities is defined and card_data.topic_entities and card_data.topic_entities|length > 0 %}
+• 相关实体: {{ card_data.topic_entities[:5] | join(', ') }}
+{%- endif %}
+{%- if card_data.topic_keywords is defined and card_data.topic_keywords and card_data.topic_keywords|length > 0 %}
+• 关键词: {{ card_data.topic_keywords[:5] | join(', ') }}
+{%- endif %}
+• 提及次数: {{ card_data.topic_mention_count | default('N/A') }}
+• 置信度: {{ "%.1f%%" | format(card_data.topic_confidence * 100) if card_data.topic_confidence is defined and card_data.topic_confidence is not none else "待计算" }}
+{%- if card_data.topic_sources is defined and card_data.topic_sources and card_data.topic_sources|length > 0 %}
+• 来源: {{ card_data.topic_sources[:5] | join(', ') }}
+{%- endif %}
+{%- if card_data.topic_evidence_links is defined and card_data.topic_evidence_links and card_data.topic_evidence_links|length > 0 %}
+• 证据:
+{%- for link in card_data.topic_evidence_links[:5] %}
+  - [证据{{ loop.index }}]({{ link }})
+{%- endfor %}
+{%- endif %}
+
+{#- Degraded state warning -#}
+{%- if card_data.states is defined and card_data.states.degrade %}
+⚠️ **服务降级提示:** 部分数据服务暂时不可用，显示结果基于缓存或降级策略
+{%- endif %}
+
+🔍 **验证路径:** {{ card_data.verify_path | default('/') }}
+📅 **数据时间:** {{ card_data.data_as_of | default('N/A') }}
+
+{#- Legal note -#}
+_{{ card_data.legal_note | default("本信息仅为风险线索与技术判断，不构成投资建议。") }}_

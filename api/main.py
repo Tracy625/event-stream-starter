@@ -8,7 +8,7 @@ from starlette.responses import Response
 from prometheus_client import Counter
 
 # Import all route modules at the top
-from api.routes import health, security, ingest_x, dex, signals_heat, signals_topic, onchain
+from api.routes import health, security, ingest_x, dex, signals_heat, signals_topic, onchain, x_health
 from api.routes import signals_summary, rules, cards, cards_send, metrics
 from api.routes import sentiment as sentiment_routes  # sentiment routes shim
 from api import routes_expert_onchain
@@ -164,6 +164,7 @@ app.include_router(health.router)    # Health check routes (priority)
 app.include_router(metrics.router)  # Metrics routes (Day23+24) - before signals_summary catch-all
 app.include_router(security.router)  # Security routes
 app.include_router(ingest_x.router)  # X ingestion routes (Day8)
+app.include_router(x_health.router)  # X health + simple read-only routes
 app.include_router(dex.router)      # DEX routes (Day9)
 app.include_router(rules.router)    # Rules evaluation routes (Day18)
 app.include_router(signals_topic.router)  # Topic signals (Day9.1)

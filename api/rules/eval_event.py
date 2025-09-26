@@ -16,11 +16,15 @@ from typing import List, Optional, Tuple, Dict, Any
 
 from api.core.metrics_store import log_json
 from api.config.hotreload import get_registry
+from api.core.metrics import rules_market_risk_hits_total
 
 # Safety limits
 MAX_FILE_BYTES = 262144  # 256KB
 MAX_RULES_COUNT = 200
-ALLOWED_ENVS = {"THETA_LIQ", "THETA_VOL", "THETA_SENT"}
+ALLOWED_ENVS = {"THETA_LIQ", "THETA_VOL", "THETA_SENT",
+                "MARKET_RISK_VOLUME_THRESHOLD",
+                "MARKET_RISK_LIQ_MIN",
+                "MARKET_RISK_LIQ_RISK"}
 
 
 class RuleLoader:
@@ -295,26 +299,51 @@ class RuleEvaluator:
         
         # Evaluate all rules
         rule_results = []
+        hit_rules = []
+        tags = []
         total_score = 0.0
-        
+
         for group in rules["groups"]:
             group_name = group.get("name", "unknown")
             group_priority = group.get("priority", 0)
-            
-            for rule in group.get("rules", []):
+
+            for idx, rule in enumerate(group.get("rules", [])):
+                # Get rule ID (support both id field and auto-generation)
+                rule_id = rule.get("id") or f"{group_name}_{idx}"
+
                 # Support both "condition" and "when" field names
                 condition = rule.get("condition") or rule.get("when", "")
                 score = rule.get("score", 0)
                 reason = rule.get("reason", "")
-                
+
                 # Evaluate condition
                 if condition and self._evaluate_condition(condition, eval_context):
                     total_score += score
+                    hit_rules.append(rule_id)
+
+                    # Check if this is a market risk rule
+                    if rule_id.startswith("MR"):
+                        # 1) 每命中一条 MR 规则都记一次数
+                        rules_market_risk_hits_total.inc({"rule_id": rule_id})
+                        # 2) tag 去重追加
+                        if "market_risk" not in tags:
+                            tags.append("market_risk")
+                        # 3) 结构化日志
+                        log_json(
+                            stage="rules.market_risk",
+                            rule_id=rule_id,
+                            score=score,
+                            volume=eval_context.get("dex_volume_1h"),
+                            liquidity=eval_context.get("dex_liquidity"),
+                            module="api.rules.eval_event"
+                        )
+
                     rule_results.append({
                         "group": group_name,
                         "priority": group_priority,
                         "score": score,
-                        "reason": reason
+                        "reason": reason,
+                        "rule_id": rule_id
                     })
         
         # Add missing source reasons with higher priority to ensure visibility
@@ -356,6 +385,8 @@ class RuleEvaluator:
         return {
             "score": total_score,
             "level": level,
+            "tags": tags,
+            "hit_rules": hit_rules,
             "reasons": reasons,
             "all_reasons": all_reasons,
             "missing": missing_sources,
@@ -402,7 +433,11 @@ class RuleEvaluator:
         try:
             # Make a copy to avoid modifying original
             expr = condition
-            
+
+            # Provide default for heat_slope to avoid KeyError
+            if "heat_slope" in expr and "heat_slope" not in context:
+                context["heat_slope"] = 0
+
             # Handle "is null" and "is not null" first
             for field in self.ALLOWED_FIELDS:
                 # Match field with word boundaries to avoid partial replacements

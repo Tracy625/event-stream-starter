@@ -562,3 +562,9 @@
     - /metrics 可抓到 telegram_send_total / retry_total / pipeline_latency_ms_bucket / cards_degrade_count
     - 所有 Makefile 新增目标执行成功，PR Template 生效
   - 回滚：注释 alerts.yml 全部规则；删除 Makefile 新增目标与 PR Template
+
+### Tech Debt (post-Day22, optional)
+
+- unify SQLAlchemy Base (avoid dual declarative_base)
+- migrate JSON → JSONB for payload_json
+- consolidate notifier/\* modules naming

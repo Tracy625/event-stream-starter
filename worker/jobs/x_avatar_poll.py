@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 sys.path.append('/app')
 
 from api.core.metrics_store import log_json
-from api.clients.x_client import get_x_client
+from api.clients.x_client import get_x_client, get_x_client_from_env
+from api.cache import get_redis_client
 import redis
 import yaml
 
@@ -116,6 +117,15 @@ def run_once() -> Dict[str, Any]:
         log_json(stage="x.avatar.error", error="Redis unavailable")
         stats["errors"] = 1
         return stats
+    # Job cooldown lock
+    try:
+        cooldown = int(os.getenv("X_JOB_COOLDOWN_SEC", "60"))
+        if cooldown > 0:
+            if not r.set("x:job:avatar:lock", "1", ex=cooldown, nx=True):
+                log_json(stage="x.avatar.skip", reason="cooldown_lock")
+                return stats
+    except Exception:
+        pass
     
     # Load KOL handles
     handles = load_kol_handles()
@@ -125,9 +135,13 @@ def run_once() -> Dict[str, Any]:
         return stats
     
     # Get X client
-    backend = os.getenv("X_BACKEND", "graphql")
     try:
-        client = get_x_client(backend)
+        # Prefer multi-source when configured
+        if os.getenv("X_BACKENDS", "").strip():
+            client = get_x_client_from_env()
+        else:
+            backend = os.getenv("X_BACKEND", "graphql")
+            client = get_x_client(backend)
     except Exception as e:
         log_json(stage="x.avatar.error", error=f"Client init failed: {e}")
         stats["errors"] = 1

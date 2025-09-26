@@ -1,0 +1,147 @@
+{
+  "title": "GUIDS SLO Dashboard",
+  "description": "Service Level Objectives monitoring dashboard for GUIDS platform",
+  "version": "1.0.0",
+  "refresh_interval": 30,
+  "panels": [
+    {
+      "id": "5xx_rate",
+      "title": "HTTP 5xx Error Rate",
+      "type": "graph",
+      "datasource": "prometheus",
+      "position": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "query": "rate(http_requests_total{status_code=~\"5..\"}[5m]) / rate(http_requests_total[5m])",
+      "legend": {
+        "show": true,
+        "position": "right"
+      },
+      "thresholds": [
+        {"value": 0.01, "color": "red", "label": "SLO Breach (>1%)"}
+      ],
+      "unit": "percentunit",
+      "description": "HTTP 5xx error rate over 5 minutes. SLO target: <1%"
+    },
+    {
+      "id": "latency_p95",
+      "title": "Pipeline Latency P95",
+      "type": "graph",
+      "datasource": "prometheus",
+      "position": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "query": "histogram_quantile(0.95, rate(pipeline_latency_ms_bucket[5m]))",
+      "legend": {
+        "show": true,
+        "position": "right"
+      },
+      "thresholds": [
+        {"value": 2000, "color": "yellow", "label": "Warning (>2s)"},
+        {"value": 5000, "color": "red", "label": "Critical (>5s)"}
+      ],
+      "unit": "ms",
+      "description": "95th percentile pipeline processing latency. SLO target: <2000ms"
+    },
+    {
+      "id": "config_reload_errors",
+      "title": "Config Reload Errors",
+      "type": "counter",
+      "datasource": "prometheus",
+      "position": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "query": "sum(rate(config_reload_failures_total[5m])) by (source, reason)",
+      "legend": {
+        "show": true,
+        "position": "bottom"
+      },
+      "description": "Configuration reload errors by source and reason"
+    },
+    {
+      "id": "telegram_error_rate",
+      "title": "Telegram Send Error Rate",
+      "type": "graph",
+      "datasource": "prometheus",
+      "position": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "query": "sum(rate(telegram_send_total{status=\"err\"}[5m])) / sum(rate(telegram_send_total[5m]))",
+      "legend": {
+        "show": true,
+        "position": "right"
+      },
+      "thresholds": [
+        {"value": 0.2, "color": "yellow", "label": "Warning (>20%)"},
+        {"value": 0.5, "color": "red", "label": "Critical (>50%)"}
+      ],
+      "unit": "percentunit",
+      "description": "Telegram send error rate. SLO target: <20%"
+    },
+    {
+      "id": "error_budget_5xx",
+      "title": "5xx Error Budget Remaining",
+      "type": "gauge",
+      "datasource": "prometheus",
+      "position": {"x": 0, "y": 16, "w": 8, "h": 6},
+      "query": "1 - (sum(increase(http_requests_total{status_code=~\"5..\"}[30d])) / (sum(increase(http_requests_total[30d])) * 0.01))",
+      "format": "percent",
+      "thresholds": [
+        {"value": 0, "color": "red", "label": "Exhausted"},
+        {"value": 0.25, "color": "yellow", "label": "Low"},
+        {"value": 0.5, "color": "green", "label": "Healthy"}
+      ],
+      "description": "Percentage of monthly error budget remaining (target: 99% success rate)"
+    },
+    {
+      "id": "request_rate",
+      "title": "Request Rate by Endpoint",
+      "type": "table",
+      "datasource": "prometheus",
+      "position": {"x": 8, "y": 16, "w": 8, "h": 6},
+      "query": "sum(rate(http_requests_total[5m])) by (method, endpoint, status_code)",
+      "columns": [
+        {"field": "method", "title": "Method", "width": 80},
+        {"field": "endpoint", "title": "Endpoint", "width": 200},
+        {"field": "status_code", "title": "Status", "width": 80},
+        {"field": "value", "title": "Rate (req/s)", "width": 100}
+      ],
+      "description": "Request rate breakdown by endpoint and status"
+    },
+    {
+      "id": "cache_effectiveness",
+      "title": "Cache Hit Rate",
+      "type": "gauge",
+      "datasource": "prometheus",
+      "position": {"x": 16, "y": 16, "w": 8, "h": 6},
+      "query": "sum(rate(cache_hits_total[5m])) / (sum(rate(cache_hits_total[5m])) + sum(rate(cache_misses_total[5m])))",
+      "format": "percent",
+      "thresholds": [
+        {"value": 0.5, "color": "red", "label": "Poor (<50%)"},
+        {"value": 0.7, "color": "yellow", "label": "Fair (50-70%)"},
+        {"value": 0.9, "color": "green", "label": "Good (>90%)"}
+      ],
+      "description": "Overall cache hit rate across all layers"
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "datasource": "prometheus",
+        "enable": true,
+        "expr": "ALERTS{alertstate=\"firing\"}",
+        "tagKeys": "alertname,severity",
+        "titleFormat": "Alert: {{alertname}}",
+        "textFormat": "{{description}}"
+      }
+    ]
+  },
+  "variables": [
+    {
+      "name": "time_range",
+      "type": "interval",
+      "options": [
+        {"text": "Last 5 minutes", "value": "5m"},
+        {"text": "Last 15 minutes", "value": "15m"},
+        {"text": "Last 30 minutes", "value": "30m"},
+        {"text": "Last 1 hour", "value": "1h"},
+        {"text": "Last 6 hours", "value": "6h"},
+        {"text": "Last 24 hours", "value": "24h"},
+        {"text": "Last 7 days", "value": "7d"}
+      ],
+      "current": "5m"
+    }
+  ]
+}

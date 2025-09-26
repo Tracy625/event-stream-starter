@@ -14,6 +14,8 @@ import signal
 import argparse
 from typing import List, Dict, Any
 
+import requests
+
 # Handle broken pipe gracefully
 signal.signal(signal.SIGPIPE, signal.SIG_DFL) if hasattr(signal, 'SIGPIPE') else None
 
@@ -24,6 +26,51 @@ TEST_INPUTS = [
     "great job",
     "awful mess"
 ]
+
+API_URL = "http://localhost:8000/sentiment/analyze"
+
+
+def call_api(text: str, timeout: float = 3.0) -> Dict[str, Any]:
+    """Call sentiment API and pretty-print the response."""
+    response = requests.post(API_URL, json={"text": text}, timeout=timeout)
+    payload = response.json()
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return payload
+
+
+def _assert_degrade(payload: Dict[str, Any], expected_reason: str | tuple[str, ...]):
+    if not payload.get("degrade"):
+        print("Expected degrade flag in response", file=sys.stderr)
+        sys.exit(1)
+    reasons = (expected_reason,) if isinstance(expected_reason, str) else expected_reason
+    if payload.get("reason") not in reasons:
+        print(f"Unexpected degrade reason: {payload.get('reason')} (want {reasons})", file=sys.stderr)
+        sys.exit(1)
+
+
+def run_online_smoke() -> None:
+    """Trigger HuggingFace online failures and verify fallback + metrics."""
+    print("=== HF online smoke ===")
+
+    # Scenario A: auth failure -> degrade via HTTP route (path=get/post handled server-side)
+    os.environ["SENTIMENT_BACKEND"] = "api"
+    os.environ["HF_API_TOKEN"] = "invalid-token"
+    os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
+    auth_payload = call_api("hello")
+    _assert_degrade(auth_payload, ("auth", "http_4xx", "http_401", "http_403"))
+
+    # Scenario B: force timeout from script path (direct fallback invocation)
+    os.environ["HF_API_TOKEN"] = "placeholder-token"
+    os.environ["HF_API_BASE"] = "https://10.255.255.1"
+    os.environ["SENTIMENT_TIMEOUT_S"] = "0.001"
+
+    from api.hf_sentiment import analyze_with_fallback
+
+    script_payload, _ = analyze_with_fallback("world", path_label="script")
+    print(json.dumps(script_payload, ensure_ascii=False, indent=2))
+    _assert_degrade(script_payload, "timeout")
+
+    print("smoke ok")
 
 
 def test_backend(backend: str):
@@ -178,26 +225,26 @@ def main():
                        default='hf', help='Backend to use (hf or rules)')
     parser.add_argument('--summary-json', action='store_true',
                        help='Output only JSON summary (for batch mode)')
+    parser.add_argument('--legacy', action='store_true',
+                        help='Run legacy local smoke instead of online fallback checks')
     
     args = parser.parse_args()
     
     if args.batch:
-        # Batch mode
         run_batch(args.batch, args.backend, args.summary_json)
-    else:
-        # Original smoke test mode
+        return
+
+    if args.legacy:
         if not args.summary_json:
             print("Sentiment Analysis Smoke Test")
             print("=" * 40)
-            
-            # Test rules backend
             test_backend("rules")
-            
-            # Test HF backend
             test_backend("hf")
-            
             print("\n" + "=" * 40)
             print("Smoke test completed")
+        return
+
+    run_online_smoke()
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ from sqlalchemy import (
     ForeignKey, ARRAY, TIMESTAMP, text as sa_text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 metadata = Base.metadata

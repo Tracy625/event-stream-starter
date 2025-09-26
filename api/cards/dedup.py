@@ -100,3 +100,22 @@ def mark_emitted(event_key: str, state_version: str) -> None:
             log_json(stage="dedup.store", event_key=event_key, state_version=state_version, ttl=ttl)
     except Exception as e:
         log_json(stage="dedup.store", event_key=event_key, error=str(e))
+
+
+def make_state_version_with_rules(event: dict, hit_rules: list) -> str:
+    """Generate state version with rule hit hash
+
+    Args:
+        event: Event data dict
+        hit_rules: List of rule IDs that were hit
+
+    Returns:
+        State version string with rule hash appended
+    """
+    base_version = make_state_version(event)
+    if hit_rules:
+        import hashlib
+        rules_str = ",".join(sorted(hit_rules))
+        rules_hash = hashlib.md5(rules_str.encode()).hexdigest()[:8]
+        return f"{base_version}_mr{rules_hash}"
+    return base_version

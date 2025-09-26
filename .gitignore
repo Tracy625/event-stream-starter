@@ -62,3 +62,8 @@ dump.rdb
 
 #GCP-BigQuery (Day10)
 infra/secrets/*.json
+
+# Local dev helpers
+scripts/local_dev/*
+!scripts/local_dev/.gitkeep
+!scripts/local_dev/*.example

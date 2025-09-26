@@ -936,6 +936,7 @@ curl -s "http://localhost:8000/onchain/features?chain=eth&address=0x000000000000
 # - windows["30"], windows["60"], windows["180"] present (if data exists)
 # - growth_ratio non-null for the second timestamp entries
 # - stale=false if DB has recent rows; cache=true on second identical query
+# - Freshness SLO：`FRESHNESS_SLO` 默认 600s，关注 `/metrics` 中 `bq_data_freshness_lag_seconds{chain="eth"}` 超阈值即视为告警
 
 ================================================================
 
@@ -1747,6 +1748,219 @@ CARDS_SUMMARY_TIMEOUT_MS=1 EVENT_KEY=TEST_BAD make verify_cards
   # - 429 Too Many Requests → retry_after 重试
   # - 5xx/网络 → 指数退避
   ```
+
+================================================================
+
+## P0-3 — Card Routing Table-Driven Implementation (2025-09-25)
+
+### 验收要点
+
+- 卡片路由表驱动化，支持 4 种类型：primary, secondary, topic, market_risk
+- 使用 CARD_ROUTES 和 CARD_TEMPLATES 字典避免 if/elif 链
+- 统一 generate 函数签名：generate_{type}_card(event, signals)
+- 集中式 Prometheus 指标注册在 api/core/metrics.py
+
+### 运行验收
+
+- 验证路由表配置
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.cards.registry import CARD_ROUTES, CARD_TEMPLATES
+  print("Registered routes:", list(CARD_ROUTES.keys()))
+  print("Registered templates:", list(CARD_TEMPLATES.keys()))
+  PY
+  # Expected: ['primary', 'secondary', 'topic', 'market_risk'] for both
+  ```
+
+- 测试卡片生成（各类型）
+
+  ```bash
+  # Primary card
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.cards.generator import generate_card
+  event = {"type": "primary", "event_key": "TEST:PRIMARY:001", "risk_level": "yellow"}
+  signals = {"goplus_risk": "yellow", "dex_liquidity": 100000}
+  card = generate_card(event, signals)
+  print(f"Generated {card['card_type']} card for {card['event_key']}")
+  PY
+  ```
+
+  ```bash
+  # Market risk card
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.cards.generator import generate_card
+  event = {"type": "market_risk", "event_key": "TEST:MR:001", "risk_level": "red"}
+  signals = {"goplus_risk": "red", "dex_volume_1h": 600000, "hit_rules": ["MR01", "MR03"]}
+  card = generate_card(event, signals)
+  print(f"Generated {card['card_type']} card with rules: {signals.get('hit_rules')}")
+  PY
+  ```
+
+- 验证模板渲染
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.cards.renderer import render_card
+  card = {
+      "card_type": "market_risk",
+      "event_key": "TEST:MR:001",
+      "summary": "High volume alert",
+      "risk_note": "Volume exceeded 500K"
+  }
+  tg_msg = render_card(card, "tg")
+  print("TG rendering OK:", bool(tg_msg))
+  ui_html = render_card(card, "ui")
+  print("UI rendering OK:", bool(ui_html))
+  PY
+  ```
+
+================================================================
+
+## P1-1 — Market Risk Detection via Rules Engine (2025-09-25)
+
+### 验收要点
+
+- 新增 MR01-MR06 市场风险规则在 rules/rules.yml
+- 规则引擎支持 tags 机制，MR 规则命中添加 "market_risk" 标签
+- goplus_scan 根据规则评估设置 signal type="market_risk"
+- Redis 冷却机制防止重复告警（默认 600 秒）
+- 环境变量支持动态阈值调整
+
+### 运行验收
+
+- 验证规则加载
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.rules.eval_event import RuleEvaluator
+  evaluator = RuleEvaluator()
+  print(f"Loaded {len(evaluator.rules)} rule groups")
+  # Check MR rules exist
+  mr_rules = [r for group in evaluator.rules for r in group["rules"] if r["id"].startswith("MR")]
+  print(f"Found {len(mr_rules)} market risk rules")
+  PY
+  # Expected: 6 MR rules
+  ```
+
+- 测试规则评估（触发 MR01）
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  import os
+  from api.rules.eval_event import RuleEvaluator
+
+  os.environ["MARKET_RISK_VOLUME_THRESHOLD"] = "500000"
+  evaluator = RuleEvaluator()
+
+  signals_data = {
+      "goplus_risk": "green",
+      "buy_tax": 2.0,
+      "sell_tax": 2.0,
+      "lp_lock_days": 180,
+      "honeypot": False,
+      "dex_liquidity": 100000.0,
+      "dex_volume_1h": 600000.0,  # > 500000 triggers MR01
+      "heat_slope": 1.0
+  }
+  events_data = {"last_sentiment_score": 0.7}
+
+  result = evaluator.evaluate(signals_data, events_data)
+  print(f"Tags: {result['tags']}")
+  print(f"Hit rules: {result['hit_rules']}")
+  print(f"Level: {result['level']} (should not be 'market_risk')")
+  PY
+  # Expected: Tags includes "market_risk", Hit rules includes "MR01"
+  ```
+
+- 测试冷却机制
+
+  ```bash
+  # First call sets cooldown
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.cache import get_redis_client
+  import os
+
+  redis = get_redis_client()
+  event_key = "TEST:TOKEN:123"
+  cooldown_key = f"mr:cooldown:{event_key}"
+
+  # Simulate first detection
+  if not redis.exists(cooldown_key):
+      redis.setex(cooldown_key, 600, "1")
+      print("Type would be set to market_risk")
+  else:
+      ttl = redis.ttl(cooldown_key)
+      print(f"In cooldown, {ttl} seconds remaining")
+  PY
+
+  # Second call shows cooldown
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.cache import get_redis_client
+
+  redis = get_redis_client()
+  cooldown_key = f"mr:cooldown:TEST:TOKEN:123"
+
+  if redis.exists(cooldown_key):
+      ttl = redis.ttl(cooldown_key)
+      print(f"Still in cooldown: {ttl} seconds remaining")
+  PY
+  ```
+
+- 验证状态版本包含规则哈希
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.cards.dedup import make_state_version_with_rules
+
+  event = {"event_key": "TEST:123", "state": "candidate", "risk_level": "yellow"}
+  hit_rules = ["MR01", "MR03"]
+
+  version = make_state_version_with_rules(event, hit_rules)
+  print(f"State version with rules: {version}")
+  # Should include _mr hash suffix
+
+  # Test ordering stability
+  version2 = make_state_version_with_rules(event, ["MR03", "MR01"])  # Different order
+  print(f"Same rules, different order: {version == version2}")
+  # Should be True
+  PY
+  ```
+
+- 环境变量测试
+
+  ```bash
+  # Test custom thresholds
+  docker compose -f infra/docker-compose.yml exec -T api sh -c '
+    MARKET_RISK_VOLUME_THRESHOLD=100000 \
+    MARKET_RISK_LIQ_MIN=5000 \
+    python - <<PY
+  from api.rules.eval_event import RuleEvaluator
+  import os
+  print(f"Volume threshold: {os.getenv('MARKET_RISK_VOLUME_THRESHOLD')}")
+  print(f"Liquidity min: {os.getenv('MARKET_RISK_LIQ_MIN')}")
+  PY'
+  ```
+
+- 验证指标注册
+
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
+  from api.core.metrics import rules_market_risk_hits_total, signals_type_set_total
+  print(f"Metric 1: {rules_market_risk_hits_total._name}")
+  print(f"Metric 2: {signals_type_set_total._name}")
+  PY
+  # Should print metric names without error
+  ```
+
+### 环境变量配置
+
+| 变量名                        | 默认值 | 说明                    |
+| ----------------------------- | ------ | ----------------------- |
+| MARKET_RISK_VOLUME_THRESHOLD | 500000 | 成交量异常阈值（USD）   |
+| MARKET_RISK_LIQ_MIN          | 10000  | 最低流动性要求（USD）   |
+| MARKET_RISK_LIQ_RISK         | 50000  | 流动性风险阈值（USD）   |
+| MARKET_RISK_COOLDOWN_SEC     | 600    | 冷却时间（秒）          |
 
 ================================================================
 
