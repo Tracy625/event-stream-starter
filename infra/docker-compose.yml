@@ -54,18 +54,11 @@ services:
       EXPERT_RATE_LIMIT_PER_MIN: "5"
       EXPERT_CACHE_TTL_SEC: "180"
 
-      # Use real Telegram (bot token from env)
-      TELEGRAM_BOT_TOKEN: ${TG_BOT_TOKEN}
-
-      # Telegram config (Day20+21)
-      TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
-      TG_CHANNEL_ID: ${TG_CHANNEL_ID:-}
+      # Telegram config (real mode). Secrets and IDs come from env_file ../.env
       TG_RATE_LIMIT: ${TG_RATE_LIMIT:-20}
       TG_TIMEOUT_SECS: ${TG_TIMEOUT_SECS:-6}
       # TG_SANDBOX explicitly disabled for real Telegram
       TG_SANDBOX: ""
-      TG_SANDBOX_CHANNEL_ID: ${TG_SANDBOX_CHANNEL_ID:-}
-      TG_SANDBOX_THREAD_ID: ${TG_SANDBOX_THREAD_ID:-}
       # Enable real Telegram mode
       TELEGRAM_MODE: ${TELEGRAM_MODE:-real}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
@@ -78,7 +71,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8000/healthz >/dev/null 2>&1 || python - <<'PY'\nimport urllib.request,sys\ntry:\n  urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)\n  sys.exit(0)\nexcept Exception:\n  sys.exit(1)\nPY"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8000/readyz >/dev/null 2>&1 || python - <<'PY'\nimport urllib.request,sys\ntry:\n  urllib.request.urlopen('http://localhost:8000/readyz', timeout=3)\n  sys.exit(0)\nexcept Exception:\n  sys.exit(1)\nPY"]
       interval: 10s
       timeout: 3s
       retries: 20
@@ -101,15 +94,11 @@ services:
       CELERY_RESULT_BACKEND: ${REDIS_URL:-redis://redis:6379/0}
       PYTHONPATH: /app:/app/worker/src
       
-      # Telegram config (Day20+21)
-      TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
-      TG_CHANNEL_ID: ${TG_CHANNEL_ID:-}
+      # Telegram config (real mode). Secrets and IDs come from env_file ../.env
       TG_RATE_LIMIT: ${TG_RATE_LIMIT:-20}
       TG_TIMEOUT_SECS: ${TG_TIMEOUT_SECS:-6}
       # TG_SANDBOX explicitly disabled for real Telegram
       TG_SANDBOX: ""
-      TG_SANDBOX_CHANNEL_ID: ${TG_SANDBOX_CHANNEL_ID:-}
-      TG_SANDBOX_THREAD_ID: ${TG_SANDBOX_THREAD_ID:-}
       # Enable real Telegram mode
       TELEGRAM_MODE: ${TELEGRAM_MODE:-real}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
@@ -140,14 +129,11 @@ services:
       BEAT_HEARTBEAT_KEY: ${BEAT_HEARTBEAT_KEY:-beat:last_heartbeat}
       BEAT_STALE_SEC: ${BEAT_STALE_SEC:-15}
       BEAT_CMD: ${BEAT_CMD:-celery -A worker.app beat --loglevel=INFO}
-      TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
-      TG_CHANNEL_ID: ${TG_CHANNEL_ID:-}
+      # Telegram config (real mode). Secrets and IDs come from env_file ../.env
       TG_RATE_LIMIT: ${TG_RATE_LIMIT:-20}
       TG_TIMEOUT_SECS: ${TG_TIMEOUT_SECS:-6}
       # TG_SANDBOX explicitly disabled for real Telegram
       TG_SANDBOX: ""
-      TG_SANDBOX_CHANNEL_ID: ${TG_SANDBOX_CHANNEL_ID:-}
-      TG_SANDBOX_THREAD_ID: ${TG_SANDBOX_THREAD_ID:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis}
     command: python scripts/beat_watchdog.py

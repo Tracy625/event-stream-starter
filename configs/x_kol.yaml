@@ -1,16 +1,9 @@
+# KOL handles configuration for Apify-based X ingestion
+# Priority: this file is used first; if empty or missing, code falls back to .env X_KOL_HANDLES
+# handle values are Twitter screen names without '@'
+
 kol:
   - handle: elonmusk
   - handle: whale_alert
   - handle: cryptocom
-  - handle: binance
-  - handle: coinbase
-  - handle: CryptoGuru
-  - handle: VitalikButerin
-  - handle: cz_binance
-  - handle: SBF_FTX
-  - handle: APompliano
-  - handle: aantonop
-  - handle: coindesk
-  - handle: Cointelegraph
-  - handle: TheBlock__
-  - handle: DefiPulse
+

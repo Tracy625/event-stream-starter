@@ -208,7 +208,7 @@ def run_once() -> Dict[str, int]:
     # Get clients: prefer multi-source via X_BACKENDS
     backends = os.getenv("X_BACKENDS", "").strip()
     if backends:
-    x_client = get_x_client_from_env()
+        x_client = get_x_client_from_env()
     else:
         backend = os.getenv("X_BACKEND", "graphql")
         x_client = get_x_client(backend)
@@ -220,8 +220,13 @@ def run_once() -> Dict[str, int]:
             # Get cursor for incremental fetch
             since_id = get_cursor(redis_client, handle)
             
-            # Fetch tweets
-            raw_tweets = x_client.fetch_user_tweets(handle, since_id)
+            # Fetch tweets with configurable limit (default 20)
+            fetch_limit = int(os.getenv("X_KOL_FETCH_LIMIT", "20") or 20)
+            try:
+                raw_tweets = x_client.fetch_user_tweets(handle, since_id, fetch_limit)  # type: ignore[arg-type]
+            except TypeError:
+                # Backward-compat for clients without 'limit' parameter
+                raw_tweets = x_client.fetch_user_tweets(handle, since_id)  # type: ignore[call-arg]
             stats["fetched"] += len(raw_tweets)
             
             if not raw_tweets:
