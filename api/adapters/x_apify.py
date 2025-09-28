@@ -52,7 +52,14 @@ def map_apify_tweet(item: Dict[str, Any]) -> Dict[str, Any]:
     """Map a single Apify dataset item to unified tweet schema."""
     # Apify Tweet Scraper often provides id, userScreenName, fullText/text, createdAt
     tid = _norm_str(item.get("id") or item.get("rest_id") or item.get("tweetId") or item.get("id_str"))
-    author = _norm_str(item.get("userScreenName") or item.get("user") or item.get("screenName") or item.get("author"))
+    # Prefer nested user.screen_name when present
+    user = item.get("user") if isinstance(item.get("user"), dict) else None
+    author = _norm_str(
+        (user.get("screen_name") if user else None)
+        or item.get("userScreenName")
+        or item.get("screenName")
+        or item.get("author")
+    )
     text = _norm_str(item.get("fullText") or item.get("full_text") or item.get("text") or item.get("body"))
     created = _norm_str(item.get("createdAt") or item.get("created_at") or item.get("time") or item.get("ts"))
     urls = _extract_urls(item)
@@ -67,8 +74,20 @@ def map_apify_tweet(item: Dict[str, Any]) -> Dict[str, Any]:
 
 def map_apify_user(item: Dict[str, Any]) -> Dict[str, Any]:
     """Map Apify user-like object to minimal user profile schema."""
-    handle = _norm_str(item.get("userScreenName") or item.get("screenName") or item.get("handle") or item.get("username"))
-    avatar = _norm_str(item.get("profileImageUrl") or item.get("avatarUrl") or item.get("avatar_url") or item.get("profile_image_url"))
+    user = item.get("user") if isinstance(item.get("user"), dict) else None
+    handle = _norm_str(
+        (user.get("screen_name") if user else None)
+        or item.get("userScreenName")
+        or item.get("screenName")
+        or item.get("handle")
+        or item.get("username")
+    )
+    avatar = _norm_str(
+        (user.get("profile_image_url_https") if user else None)
+        or item.get("profileImageUrl")
+        or item.get("avatarUrl")
+        or item.get("avatar_url")
+        or item.get("profile_image_url")
+    )
     ts = _norm_str(item.get("ts") or item.get("time") or item.get("createdAt") or item.get("updatedAt") or "")
     return {"handle": handle, "avatar_url": avatar, "ts": ts}
-

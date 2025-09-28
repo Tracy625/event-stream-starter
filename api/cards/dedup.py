@@ -9,7 +9,7 @@ def make_state_version(event: dict) -> str:
     """
     Generate state version string from event
     
-    Format: {state}|{risk_level}|degrade:{0|1}|v1
+    Format: {state}|{risk_level}|degrade:{0|1}|{EVENT_KEY_VERSION}
     """
     state = event.get("state", "candidate")
     risk_level = event.get("risk_level", "unknown")
@@ -20,7 +20,9 @@ def make_state_version(event: dict) -> str:
     degrade = states.get("degrade", False) or (risk_level == "gray")
     degrade_flag = "1" if degrade else "0"
     
-    state_version = f"{state}|{risk_level}|degrade:{degrade_flag}|v1"
+    # Use EVENT_KEY_VERSION for better governance during key version gray rollout
+    key_ver = os.environ.get("EVENT_KEY_VERSION", "v1").strip() or "v1"
+    state_version = f"{state}|{risk_level}|degrade:{degrade_flag}|{key_ver}"
     
     # Log version creation
     log_json(

@@ -5,6 +5,7 @@ from .jobs.outbox_dlq_recover import recover_once
 from api.tasks.beat import heartbeat as beat_heartbeat
 from celery.schedules import crontab
 import json
+from .jobs.x_kol_poll import run_once as kol_poll_once
 
 @app.task
 def ping():
@@ -57,6 +58,11 @@ def beat_heartbeat_task():
     """Record beat heartbeat for health monitoring."""
     return beat_heartbeat()
 
+@app.task(name="x.kol.poll_once")
+def x_kol_poll_once():
+    """Run KOL polling job once (scheduled by beat)."""
+    return kol_poll_once()
+
 # Celery Beat schedule configuration
 app.conf.beat_schedule = {
     'onchain-verify-every-minute': {
@@ -70,5 +76,10 @@ app.conf.beat_schedule = {
     'beat-heartbeat': {
         'task': 'beat.heartbeat',
         'schedule': 5.0,
+    },
+    'x-kol-poll-every-5min': {
+        'task': 'x.kol.poll_once',
+        'schedule': 300.0,  # every 5 minutes
+        'options': {'queue': 'x_polls'},
     },
 }

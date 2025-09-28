@@ -1,6 +1,7 @@
 import api  # noqa: F401 ensure API instrumentation (requests metrics) available in worker
 from celery import Celery
 import os
+import redis
 
 # Single source of truth for broker/backend
 redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -23,6 +24,44 @@ from . import tasks
 # 注册周期任务：每 20 秒跑一次 outbox 批处理
 from celery.schedules import schedule
 from worker.tasks import outbox_process_batch
+from api.core.metrics import (
+    container_restart_total,
+    celery_queue_backlog,
+    celery_queue_backlog_warn_total,
+)
+
+# Increment restart counter on worker startup
+try:
+    container_restart_total.inc()
+except Exception:
+    pass
+
+
+CELERY_BACKLOG_WARN = int(os.getenv("CELERY_BACKLOG_WARN", "100"))
+CELERY_SAMPLE_TIMEOUT_MS = int(os.getenv("CELERY_SAMPLE_TIMEOUT_MS", "300"))
+
+
+def _record_queue_backlog():
+    """Measure default Celery queue backlog and record gauge."""
+    try:
+        r = redis.from_url(redis_url, socket_timeout=max(0.05, CELERY_SAMPLE_TIMEOUT_MS/1000.0))
+        # Default Celery queue key is 'celery'
+        size = r.llen('celery') or 0
+        celery_queue_backlog.set(float(size), labels={"queue": "celery"})
+        if size >= CELERY_BACKLOG_WARN:
+            # log a warning via metrics_store if available
+            try:
+                from api.core.metrics_store import log_json
+                log_json(stage="queue.backlog.warn", queue="celery", size=int(size), threshold=CELERY_BACKLOG_WARN)
+            except Exception:
+                pass
+            try:
+                celery_queue_backlog_warn_total.inc(labels={"queue": "celery"})
+            except Exception:
+                pass
+    except Exception:
+        # Swallow errors; readiness/metrics will capture redis issues
+        pass
 
 @app.on_after_configure.connect
 def setup_periodic_tasks(sender, **kwargs):
@@ -32,6 +71,17 @@ def setup_periodic_tasks(sender, **kwargs):
         outbox_process_batch.s(),
         name="outbox-process-every-20s",
     )
+    # Queue backlog sampling every 30s
+    sender.add_periodic_task(
+        schedule(30.0),
+        app.signature('worker.app._record_queue_backlog', immutable=True),
+        name="queue-backlog-sample-30s",
+    )
+
+# Expose backlog recorder as a task for beat scheduling
+@app.task(name='worker.app._record_queue_backlog')
+def _record_queue_backlog_task():
+    _record_queue_backlog()
 
 
 if __name__ == "__main__":

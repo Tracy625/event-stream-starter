@@ -6,14 +6,26 @@ Provides event key generation and upsert operations for event aggregation.
 
 import os
 import re
+import time
+import random
 import hashlib
 import unicodedata
 import json
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Optional, Set, Tuple
 from sqlalchemy import create_engine, Table, MetaData, func, text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from api.core.metrics_store import log_json, timeit
+from api.core.metrics import (
+    events_key_conflict_total,
+    evidence_merge_ops_total,
+    evidence_dedup_total,
+    events_upsert_tx_ms,
+    deadlock_retries_total,
+    insert_conflict_fallback_total,
+    evidence_completion_rate,
+)
 
 # Track if salt change warning has been shown
 _salt_warning_shown = False
@@ -21,6 +33,13 @@ _salt_warning_shown = False
 
 _events_tbl_cache = None
 _columns_filter_warned = False
+_unique_index_checked = False
+
+# Optional high-performance JSON
+try:  # pragma: no cover - optional
+    import orjson as _orjson  # type: ignore
+except Exception:  # pragma: no cover - optional
+    _orjson = None
 
 
 def _events_table(engine):
@@ -38,8 +57,124 @@ def _get_db_connection():
     postgres_url = os.getenv("POSTGRES_URL")
     if not postgres_url:
         raise ValueError("POSTGRES_URL environment variable not set")
-    engine = create_engine(postgres_url, echo=False, future=True)
+    # Ensure READ COMMITTED to avoid stale snapshots with concurrent upserts
+    engine = create_engine(
+        postgres_url,
+        echo=False,
+        future=True,
+        isolation_level=os.getenv("DB_ISOLATION_LEVEL", "READ COMMITTED"),
+    )
     return engine.connect()
+
+
+def _check_event_key_unique(conn) -> None:
+    """One-time check that events.event_key has UNIQUE/PRIMARY constraint (Postgres).
+
+    Logs a warning metric if missing. Does not raise.
+    """
+    global _unique_index_checked
+    if _unique_index_checked:
+        return
+    try:
+        # Only attempt on Postgres urls
+        url = os.getenv("POSTGRES_URL", "")
+        if not url or "postgres" not in url:
+            _unique_index_checked = True
+            return
+        sql = sa_text(
+            """
+            SELECT 1
+            FROM pg_constraint c
+            JOIN pg_class t ON c.conrelid = t.oid
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+            WHERE t.relname = 'events'
+              AND c.contype IN ('p','u')
+              AND a.attname = 'event_key'
+            LIMIT 1
+            """
+        )
+        row = conn.execute(sql).fetchone()
+        if not row:
+            log_json(
+                stage="events.unique_index_missing",
+                table="events",
+                column="event_key",
+                message="events.event_key lacks UNIQUE/PK; insert-conflict fallback will not work"
+            )
+        _unique_index_checked = True
+    except Exception:
+        # Silent best-effort
+        _unique_index_checked = True
+
+
+def _jitter_sleep(base_min_ms: int, base_max_ms: int, attempt: int) -> None:
+    """Sleep with exponential backoff and jitter for lock retries."""
+    # Attempt grows the window exponentially
+    scale = 2 ** attempt
+    low = base_min_ms * scale
+    high = base_max_ms * scale
+    delay_ms = random.randint(low, high)
+    time.sleep(delay_ms / 1000.0)
+
+
+def _normalize_url(url: Optional[str]) -> Optional[str]:
+    """
+    Normalize URL for deduplication:
+    - Lowercase scheme/host; http/https treated as equivalent (normalize to https)
+    - Convert IDN host to punycode
+    - Remove fragment; collapse trailing slash
+    - Remove common tracking params (utm_*, ref, ref_src)
+    - Sort remaining query params for stability
+    """
+    if not url or not isinstance(url, str):
+        return None
+    try:
+        parts = urlsplit(url.strip())
+        scheme = "https" if parts.scheme in ("http", "https", "") else parts.scheme.lower()
+        host = parts.hostname or ""
+        try:
+            host_puny = host.encode("idna").decode("ascii") if host else host
+        except Exception:
+            host_puny = host.lower()
+        # Normalize port (drop default ports)
+        port = parts.port
+        netloc = host_puny
+        if port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
+            netloc = f"{host_puny}:{port}"
+
+        # Filter query params
+        q = []
+        for k, v in parse_qsl(parts.query, keep_blank_values=True):
+            kl = (k or "").lower()
+            if kl.startswith("utm_") or kl in ("ref", "ref_src"):
+                continue
+            q.append((kl, v))
+        q.sort()
+        query = urlencode(q, doseq=True)
+
+        # Drop fragment
+        fragment = ""
+        # Normalize path: collapse trailing slash except root
+        path = parts.path or "/"
+        if path != "/":
+            path = re.sub(r"/+$", "", path)
+
+        normalized = urlunsplit((scheme, netloc, path, query, fragment))
+        return normalized
+    except Exception:
+        return url
+
+
+def _ts_bucket(ts: Any, bucket_sec: int) -> int:
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except Exception:
+            ts = datetime.now(timezone.utc)
+    if not hasattr(ts, "timestamp"):
+        ts = datetime.now(timezone.utc)
+    epoch = int(ts.timestamp())
+    return (epoch // bucket_sec) * bucket_sec
 
 
 def _normalize_token_symbol(symbol: Optional[str]) -> str:
@@ -285,6 +420,7 @@ def make_event_key(post: Dict[str, Any]) -> str:
     # Read environment variables
     salt = os.getenv("EVENT_KEY_SALT", "v1")
     bucket_sec = int(os.getenv("EVENT_TIME_BUCKET_SEC", "600"))
+    key_version = os.getenv("EVENT_KEY_VERSION", "v1").strip() or "v1"
     
     # Check for salt change warning (only log once)
     global _salt_warning_shown
@@ -304,17 +440,13 @@ def make_event_key(post: Dict[str, Any]) -> str:
         raise ValueError("Event type is required for key generation")
     
     # Normalize components
-    type_norm = event_type.lower()
-    
-    # Symbol: strip edges then uppercase (preserves internal spaces)
-    symbol = post.get("symbol", "")
-    symbol_norm = symbol.strip().upper() if symbol else ""
+    type_norm = (event_type or "").lower()
     
     # Token CA: lowercase, validate 0x prefix and hex chars
     token_ca = post.get("token_ca", "")
     token_ca_norm = ""
     if token_ca:
-        token_ca_lower = token_ca.lower()
+        token_ca_lower = str(token_ca).lower()
         if not token_ca_lower.startswith("0x"):
             log_json(
                 stage="pipeline.event.key",
@@ -322,14 +454,18 @@ def make_event_key(post: Dict[str, Any]) -> str:
                 message="Token CA missing 0x prefix",
                 token_ca=token_ca
             )
-        elif not re.match(r'^0x[0-9a-f]+$', token_ca_lower):
+        elif not re.match(r'^0x[0-9a-f]{40}$', token_ca_lower):
             log_json(
                 stage="pipeline.event.key",
                 event="token_ca_warning",
-                message="Token CA contains non-hex characters",
+                message="Token CA format invalid",
                 token_ca=token_ca
             )
         token_ca_norm = token_ca_lower
+    
+    # Symbol normalized consistently with storage path (with $ and lowercase)
+    symbol_norm = _normalize_token_symbol(post.get("symbol"))
+    chain_id = post.get("chain_id") or "na"
     
     # Text normalization
     text = post.get("text", "")
@@ -346,12 +482,21 @@ def make_event_key(post: Dict[str, Any]) -> str:
     ts_epoch = int(created_ts.timestamp())
     bucket = (ts_epoch // bucket_sec) * bucket_sec
     
-    # Build preimage: type|symbol|token_ca|text_norm|bucket|salt
-    preimage = f"{type_norm}|{symbol_norm}|{token_ca_norm}|{text_norm}|{bucket}|{salt}"
-    
-    # Generate SHA256 hash (40 hex chars to match Day5 - hardcoded length)
-    hash_full = hashlib.sha256(preimage.encode()).hexdigest()
-    event_key = hash_full[:40]  # Fixed at 40 hex chars per Day5 spec
+    if key_version == "v1":
+        # Legacy v1 behavior (compat): sha256(type|symbol|token_ca|text_norm|bucket|salt) → 40 hex
+        preimage = f"{type_norm}|{symbol_norm.upper() if symbol_norm else ''}|{token_ca_norm}|{text_norm}|{bucket}|{salt}"
+        hash_full = hashlib.sha256(preimage.encode()).hexdigest()
+        event_key = hash_full[:40]
+    else:
+        # v2: identity prefers token_ca else (symbol_norm|chain); include topic_hash and text signature
+        identity = token_ca_norm or f"{symbol_norm}|{chain_id}"
+        topic_hash = post.get("topic_hash") or ""
+        # lightweight text signature (n-gram blake2s)
+        text_sig = hashlib.blake2s(text_norm.encode("utf-8")).hexdigest()[:16]
+        preimage = f"v2|{type_norm}|{identity}|{topic_hash}|{bucket}|{text_sig}"
+        # blake2s keyed with salt for stability and salt rotation
+        h = hashlib.blake2s(preimage.encode("utf-8"), key=str(salt).encode("utf-8")).hexdigest()
+        event_key = h[:40]
     
     # Log the key generation
     log_json(
@@ -361,7 +506,8 @@ def make_event_key(post: Dict[str, Any]) -> str:
         symbol=symbol_norm,
         token_ca=token_ca_norm,
         bucket=bucket,
-        salt=salt
+        salt=salt,
+        key_version=key_version
     )
     
     return event_key
@@ -369,17 +515,58 @@ def make_event_key(post: Dict[str, Any]) -> str:
 
 def _make_evidence_dedup_key(evidence: Dict[str, Any]) -> str:
     """
-    Generate deduplication key for evidence.
-    
-    Uses: sha1(source + sorted stable ref fields)
+    Generate a stable deduplication key per source with source-specific rules.
+
+    Rules:
+      - x: prefer tweet_id; else normalized url
+      - dex: prefer tx; else (chain_id,pool,ts_bucket)
+      - goplus: (goplus_endpoint|endpoint, chain_id, address)
+      - default: sha1(source + sorted stable ref fields)
     """
-    source = evidence.get("source", "")
-    ref = evidence.get("ref", {})
-    
-    # Sort ref fields for stable hashing
-    ref_sorted = json.dumps(ref, sort_keys=True)
-    
-    # Create dedup key
+    source = (evidence.get("source") or "").lower()
+    ref = evidence.get("ref", {}) or {}
+    ts = evidence.get("ts")
+    bucket_sec = int(os.getenv("EVENT_TIME_BUCKET_SEC", "600"))
+
+    if source == "x":
+        tid = ref.get("tweet_id")
+        if tid:
+            return f"x:{tid}"
+        url = _normalize_url(ref.get("url"))
+        if url:
+            # Try extract tweet id from canonical URL: /status/<id>(...)
+            m = re.search(r"/status(?:es)?/(\d+)", url)
+            if m:
+                return f"x:{m.group(1)}"
+            return f"x:{url}"
+    elif source == "dex":
+        tx = ref.get("tx")
+        if tx:
+            return f"dex:{tx}"
+        chain_id = ref.get("chain_id", "na")
+        pool = ref.get("pool", "na")
+        tb = _ts_bucket(ts or datetime.now(timezone.utc), bucket_sec)
+        return f"dex:{chain_id}:{pool}:{tb}"
+    elif source == "goplus":
+        endpoint = ref.get("goplus_endpoint") or ref.get("endpoint") or "na"
+        chain_id = ref.get("chain_id", "na")
+        address = ref.get("address", "na")
+        return f"gp:{endpoint}|{chain_id}|{address}"
+
+    # Default: stable dump of ref with normalized URLs where possible
+    ref_norm = {}
+    for k, v in ref.items():
+        if k.lower() == "url":
+            ref_norm[k] = _normalize_url(v)
+        else:
+            ref_norm[k] = v
+    if _orjson is not None:
+        try:
+            ref_sorted = _orjson.dumps(ref_norm, option=_orjson.OPT_SORT_KEYS).decode()
+        except Exception:
+            ref_sorted = json.dumps(ref_norm, sort_keys=True, separators=(",", ":"))
+    else:
+        ref_sorted = json.dumps(ref_norm, sort_keys=True, separators=(",", ":"))
     content = f"{source}|{ref_sorted}"
     return hashlib.sha1(content.encode()).hexdigest()
 
@@ -502,41 +689,91 @@ def merge_event_evidence(event_key: str, new_evidence: List[Dict[str, Any]],
     
     merge_scope = "cross_source" if strict else "single_source"
     
+    def _norm_all(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out = []
+        for it in items or []:
+            it2 = dict(it)
+            ref = dict(it2.get("ref", {}) or {})
+            # Normalize URL fields if present
+            if "url" in ref:
+                ref["url"] = _normalize_url(ref.get("url"))
+            it2["ref"] = ref
+            out.append(it2)
+        return out
+
+    def _merge_fields(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+        # Merge refs (union of keys; prefer non-empty)
+        ref_a = dict(a.get("ref", {}) or {})
+        ref_b = dict(b.get("ref", {}) or {})
+        ref_m = dict(ref_a)
+        for k, v in ref_b.items():
+            if ref_m.get(k) in (None, "") and v not in (None, ""):
+                ref_m[k] = v
+        # Merge ts: keep earliest
+        ts_a = a.get("ts")
+        ts_b = b.get("ts")
+        ts_keep = ts_a
+        try:
+            da = datetime.fromisoformat(ts_a.replace("Z", "+00:00")) if isinstance(ts_a, str) else ts_a
+            db = datetime.fromisoformat(ts_b.replace("Z", "+00:00")) if isinstance(ts_b, str) else ts_b
+            if hasattr(da, "timestamp") and hasattr(db, "timestamp"):
+                ts_keep = da if da <= db else db
+        except Exception:
+            ts_keep = ts_a or ts_b
+        # Merge weight and summary
+        wa = a.get("weight")
+        wb = b.get("weight")
+        weight = None
+        try:
+            weight = max(w for w in [wa, wb] if isinstance(w, (int, float)))
+        except ValueError:
+            weight = wa or wb
+        sa = a.get("summary") or ""
+        sb = b.get("summary") or ""
+        summary = sa if len(sa) >= len(sb) else sb
+        merged = dict(a)
+        merged["ref"] = ref_m
+        if ts_keep is not None:
+            merged["ts"] = ts_keep
+        if weight is not None:
+            merged["weight"] = weight
+        if summary:
+            merged["summary"] = summary
+        return merged
+
+    # Normalize inputs
+    existing_n = _norm_all(existing)
+    new_n = _norm_all(new_evidence)
+
     if not strict:
-        # Loose mode: only keep evidence from current_source
-        merged = []
-        # Keep existing evidence from current source
-        if current_source:
-            merged = [e for e in existing if e.get("source") == current_source]
-            # Add new evidence from current source
-            merged.extend([e for e in new_evidence if e.get("source") == current_source])
-        else:
-            # No current source specified, just append new
-            merged = existing + new_evidence
-        
+        # Loose mode: only keep evidence from current_source (still dedup within source)
+        merged_map = {}
+        for item in existing_n + new_n:
+            if current_source and item.get("source") != current_source:
+                continue
+            k = _make_evidence_dedup_key(item)
+            if k in merged_map:
+                merged_map[k] = _merge_fields(merged_map[k], item)
+            else:
+                merged_map[k] = item
+        merged = list(merged_map.values())
         after_count = len(merged)
-        deduped = 0
+        deduped = (before_count + len(new_n)) - after_count
     else:
-        # Strict mode: merge and deduplicate across sources
-        seen_keys = set()
-        merged = []
-        
-        # Process existing evidence
-        for item in existing:
-            dedup_key = _make_evidence_dedup_key(item)
-            if dedup_key not in seen_keys:
-                seen_keys.add(dedup_key)
-                merged.append(item)
-        
-        # Process new evidence
-        for item in new_evidence:
-            dedup_key = _make_evidence_dedup_key(item)
-            if dedup_key not in seen_keys:
-                seen_keys.add(dedup_key)
-                merged.append(item)
-        
+        # Strict mode: dedup across sources with field completion
+        merged_map = {}
+        for item in existing_n:
+            k = _make_evidence_dedup_key(item)
+            merged_map[k] = item
+        for item in new_n:
+            k = _make_evidence_dedup_key(item)
+            if k in merged_map:
+                merged_map[k] = _merge_fields(merged_map[k], item)
+            else:
+                merged_map[k] = item
+        merged = list(merged_map.values())
         after_count = len(merged)
-        deduped = (before_count + len(new_evidence)) - after_count
+        deduped = (before_count + len(new_n)) - after_count
     
     # Extract sources for logging
     sources = set()
@@ -544,6 +781,27 @@ def merge_event_evidence(event_key: str, new_evidence: List[Dict[str, Any]],
         if "source" in item:
             sources.add(item["source"])
     
+    # Metrics
+    evidence_merge_ops_total.inc({"scope": merge_scope})
+    for item in new_n:
+        src = (item.get("source") or "").lower()
+        evidence_dedup_total.inc({"source": src})
+
+    # Completion rate (tweet_id+url if any present)
+    comp_numer = 0
+    comp_denom = 0
+    for item in merged:
+        if (item.get("source") or "").lower() == "x":
+            r = item.get("ref", {}) or {}
+            has_tid = bool(r.get("tweet_id"))
+            has_url = bool(r.get("url"))
+            if has_tid or has_url:
+                comp_denom += 1
+                if has_tid and has_url:
+                    comp_numer += 1
+    if comp_denom:
+        evidence_completion_rate.set(comp_numer / comp_denom)
+
     # Log the merge
     log_json(
         stage="pipeline.event.evidence.merge",
@@ -671,7 +929,9 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
         if "tweet_id" in x_data:
             x_ref["tweet_id"] = x_data["tweet_id"]
         if "url" in x_data:
-            x_ref["url"] = x_data["url"]
+            # Prefer expanded_url if provided, then normalize
+            raw_url = x_data.get("expanded_url") or x_data.get("url")
+            x_ref["url"] = _normalize_url(raw_url)
         if "author" in x_data:
             x_ref["author"] = x_data["author"]
             
@@ -738,12 +998,17 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
     
     # Prepare evidence JSONB (now as array)
     evidence_jsonb = new_evidence if new_evidence else None
-    
+
     # Get engine and reflect table
     postgres_url = os.getenv("POSTGRES_URL")
     if not postgres_url:
         raise ValueError("POSTGRES_URL environment variable not set")
-    engine = create_engine(postgres_url, echo=False, future=True)
+    engine = create_engine(
+        postgres_url,
+        echo=False,
+        future=True,
+        isolation_level=os.getenv("DB_ISOLATION_LEVEL", "READ COMMITTED"),
+    )
     
     events = _events_table(engine)
     
@@ -797,49 +1062,102 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
     # Use filtered values for insert
     insert_values = filtered_insert_values
 
-    ins = pg_insert(events).values(**insert_values)
+    # Try to detect-and-merge on conflict with lock retries
+    max_retry = int(os.getenv("EVENT_DEADLOCK_MAX_RETRY", "3"))
+    backoff_min = int(os.getenv("EVENT_DEADLOCK_BACKOFF_MS_MIN", "20"))
+    backoff_max = int(os.getenv("EVENT_DEADLOCK_BACKOFF_MS_MAX", "40"))
 
-    # Build upsert statement with ON CONFLICT - now handles evidence array merge
-    # Note: This is a simplified version. In production, we'd need to fetch existing
-    # evidence and use merge_event_evidence() for proper deduplication
-    update_set = {}
-    if "last_ts" in existing_cols:
-        update_set["last_ts"] = func.greatest(events.c.last_ts, ins.excluded.last_ts)
-    if "evidence_count" in existing_cols:
-        update_set["evidence_count"] = sa_text(
-            "CASE WHEN events.evidence IS NULL THEN "
-            "  CASE WHEN jsonb_typeof(excluded.evidence) = 'array' THEN jsonb_array_length(excluded.evidence) ELSE 1 END "
-            "ELSE events.evidence_count + "
-            "  CASE WHEN jsonb_typeof(excluded.evidence) = 'array' THEN jsonb_array_length(excluded.evidence) ELSE 1 END "
-            "END"
-        )
-    # Optional fields: only set if column exists
-    for col in [
-        "last_sentiment",
-        "last_sentiment_score",
-        "candidate_score",
-        "goplus_risk",
-        "buy_tax",
-        "sell_tax",
-        "lp_lock_days",
-        "honeypot",
-    ]:
-        if col in existing_cols:
-            update_set[col] = getattr(ins.excluded, col)
-    # Merge evidence arrays (concat) only if column exists
-    if "evidence" in existing_cols:
-        update_set["evidence"] = sa_text(
-            "CASE WHEN events.evidence IS NULL THEN excluded.evidence "
-            "WHEN excluded.evidence IS NULL THEN events.evidence "
-            "ELSE events.evidence || excluded.evidence END"
-        )
-
-    stmt = ins.on_conflict_do_update(index_elements=[events.c.event_key], set_=update_set)
-    
-    # Execute with transaction
+    t0 = time.perf_counter()
     with engine.begin() as conn:
+        # One-time unique index check
+        try:
+            _check_event_key_unique(conn)
+        except Exception:
+            pass
+        merged_for_update: Optional[List[Dict[str, Any]]] = None
+        # Attempt to lock the row if it exists and merge evidence first
+        for attempt in range(max_retry + 1):
+            try:
+                sel = sa_text(
+                    "SELECT event_key, symbol, token_ca, topic_hash, evidence "
+                    "FROM events WHERE event_key = :k FOR UPDATE NOWAIT"
+                )
+                row = conn.execute(sel, {"k": event_key}).fetchone()
+                if row is not None and hasattr(row, "_mapping"):
+                    mapping = row._mapping
+                    existing_ev = mapping.get("evidence") or []
+                    # Conflict detection on identity dimensions (best-effort)
+                    row_symbol = mapping.get("symbol")
+                    row_token_ca = mapping.get("token_ca")
+                    row_topic_hash = mapping.get("topic_hash")
+                    identity_new = token_ca or f"{symbol}|na"
+                    identity_old = (row_token_ca or row_token_ca) or f"{_normalize_token_symbol(row_symbol)}|na"
+                    if (str(identity_new) != str(identity_old)) or (row_topic_hash and row_topic_hash != topic_hash):
+                        events_key_conflict_total.inc({"reason": "identity_mismatch"})
+                        log_json(
+                            stage="events.key_conflict",
+                            event_key=event_key,
+                            identity_new=str(identity_new),
+                            identity_old=str(identity_old),
+                            topic_hash_new=topic_hash,
+                            topic_hash_old=row_topic_hash,
+                        )
+                    merge_res = merge_event_evidence(
+                        event_key=event_key,
+                        new_evidence=new_evidence,
+                        existing_evidence=existing_ev,
+                        current_source=None,
+                    )
+                    merged_for_update = merge_res["merged_evidence"]
+                break  # Either locked and handled, or row missing; proceed
+            except Exception:
+                if attempt >= max_retry:
+                    # Enqueue for background compaction (hotspot)
+                    from api.core.metrics import evidence_compact_enqueue_total
+                    insert_conflict_fallback_total.inc()
+                    evidence_compact_enqueue_total.inc()
+                    break
+                deadlock_retries_total.inc()
+                _jitter_sleep(backoff_min, backoff_max, attempt)
+
+        # Prepare insert payload (use merged evidence if available)
+        if merged_for_update is not None:
+            insert_values["evidence"] = merged_for_update
+            insert_values["evidence_count"] = len(merged_for_update)
+
+        ins = pg_insert(events).values(**insert_values)
+
+        # Upsert: update replaces evidence with excluded (already merged if lock path)
+        update_set = {}
+        has_excluded = hasattr(ins, "excluded")
+        if has_excluded and "last_ts" in existing_cols and hasattr(ins.excluded, "last_ts"):
+            update_set["last_ts"] = func.greatest(events.c.last_ts, ins.excluded.last_ts)
+        if has_excluded and "evidence_count" in existing_cols and hasattr(ins.excluded, "evidence"):
+            update_set["evidence_count"] = sa_text(
+                "CASE WHEN excluded.evidence IS NULL THEN events.evidence_count "
+                "ELSE jsonb_array_length(excluded.evidence) END"
+            )
+        if has_excluded:
+            for col in [
+                "last_sentiment",
+                "last_sentiment_score",
+                "candidate_score",
+                "goplus_risk",
+                "buy_tax",
+                "sell_tax",
+                "lp_lock_days",
+                "honeypot",
+            ]:
+                if col in existing_cols and hasattr(ins.excluded, col):
+                    update_set[col] = getattr(ins.excluded, col)
+            if "evidence" in existing_cols and hasattr(ins.excluded, "evidence"):
+                update_set["evidence"] = sa_text(
+                    "CASE WHEN excluded.evidence IS NULL THEN events.evidence ELSE excluded.evidence END"
+                )
+
+        stmt = ins.on_conflict_do_update(index_elements=[events.c.event_key], set_=update_set)
         conn.execute(stmt)
-        
+
         # Fetch the final values
         row = conn.execute(
             sa_text(
@@ -848,6 +1166,9 @@ def upsert_event(post: Dict[str, Any], goplus_data: Optional[Dict[str, Any]] = N
             ),
             {"k": event_key}
         ).fetchone()
+
+    t1 = time.perf_counter()
+    events_upsert_tx_ms.observe(int(round((t1 - t0) * 1000)))
     
     # Build return dictionary
     result_dict = {

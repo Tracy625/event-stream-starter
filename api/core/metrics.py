@@ -242,3 +242,107 @@ signals_type_set_total = counter(
     "signals_type_set_total",
     "Signals type set count by type"
 )
+
+# Events aggregation metrics - centralized registration
+events_key_conflict_total = counter(
+    "events_key_conflict_total",
+    "Count of detected event_key conflicts by reason"
+)
+evidence_merge_ops_total = counter(
+    "evidence_merge_ops_total",
+    "Total evidence merge operations by scope (single_source/cross_source)"
+)
+evidence_dedup_total = counter(
+    "evidence_dedup_total",
+    "Total number of deduplicated evidence items by source"
+)
+deadlock_retries_total = counter(
+    "deadlock_retries_total",
+    "Total number of transaction retry attempts due to lock/deadlock"
+)
+insert_conflict_fallback_total = counter(
+    "insert_conflict_fallback_total",
+    "Total times we fell back to conflict-handling path on insert"
+)
+evidence_compact_enqueue_total = counter(
+    "evidence_compact_enqueue_total",
+    "Enqueued compaction jobs for hotspot keys"
+)
+events_upsert_tx_ms = histogram(
+    "events_upsert_tx_ms",
+    "Upsert transaction wall time in ms",
+    [5, 10, 20, 50, 100, 200, 500, 1000]
+)
+evidence_completion_rate = gauge(
+    "evidence_completion_rate",
+    "Rate of merges where refs got completed (tweet_id+url present when any present)"
+)
+
+# On-chain verification concurrency metrics
+onchain_lock_acquire_total = counter(
+    "onchain_lock_acquire_total",
+    "On-chain lock acquire attempts by status"
+)
+onchain_lock_release_total = counter(
+    "onchain_lock_release_total",
+    "On-chain lock release results by status"
+)
+onchain_lock_release_attempt_total = counter(
+    "onchain_lock_release_attempt_total",
+    "Total attempts to release on-chain locks"
+)
+onchain_state_cas_conflict_total = counter(
+    "onchain_state_cas_conflict_total",
+    "CAS conflicts when updating signal state"
+)
+onchain_lock_expired_seen_total = counter(
+    "onchain_lock_expired_seen_total",
+    "Cases where lock expired during processing (release observed missing)"
+)
+onchain_cooldown_hit_total = counter(
+    "onchain_cooldown_hit_total",
+    "Cooldown hits causing on-chain verification skip"
+)
+onchain_process_ms = histogram(
+    "onchain_process_ms",
+    "On-chain verification processing time per signal (ms)",
+    [10, 20, 50, 100, 200, 500, 1000, 2000]
+)
+onchain_lock_hold_ms = histogram(
+    "onchain_lock_hold_ms",
+    "On-chain lock hold time per signal (ms)",
+    [1, 5, 10, 20, 50, 100, 200, 500]
+)
+onchain_lock_wait_ms = histogram(
+    "onchain_lock_wait_ms",
+    "On-chain lock wait time before acquisition (ms)",
+    [0, 1, 5, 10, 20, 50, 100, 200]
+)
+
+# Container/process and Celery queue metrics
+container_restart_total = counter(
+    "container_restart_total",
+    "Total process/container restarts (incremented on worker startup)"
+)
+celery_queue_backlog = gauge(
+    "celery_queue_backlog",
+    "Backlog size of Celery queues"
+)
+celery_queue_backlog_warn_total = counter(
+    "celery_queue_backlog_warn_total",
+    "Total times queue backlog exceeded warn threshold"
+)
+readyz_latency_ms = histogram(
+    "readyz_latency_ms",
+    "Readiness probe latency in milliseconds",
+    [5, 10, 20, 50, 100, 200, 500, 1000]
+)
+
+# Initialize with zero values for visibility on /metrics
+try:
+    container_restart_total.inc(0)
+    celery_queue_backlog.set(0.0, labels={"queue": "celery"})
+    celery_queue_backlog_warn_total.inc(0)
+    readyz_latency_ms.observe(0)
+except Exception:
+    pass

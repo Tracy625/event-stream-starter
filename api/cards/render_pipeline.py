@@ -18,8 +18,10 @@ from api.cards.dedup import should_emit, mark_emitted
 from api.cards.transformers import to_pushcard
 from api.utils.logging import log_json
 from api.services.telegram import TelegramNotifier
-from api.db.repositories.outbox_repo import OutboxRepo
-from api.database import get_db_session
+# Note: Outbox repository helpers are imported in worker/jobs/push_cards.py.
+# render_pipeline itself does not depend on them; avoid importing here to
+# keep API-side usage lightweight and prevent import errors in minimal envs.
+# Avoid importing DB session helpers here; pipeline does not persist state directly.
 
 # Import metrics from centralized registry - no new registrations here!
 from api.core.metrics import (
@@ -217,21 +219,31 @@ def render_and_push(signal: Dict[str, Any],
         # 7. Validate against schema
         schema_path = Path("schemas/pushcard.schema.json")
         if schema_path.exists():
-            with open(schema_path) as f:
-                schema = json.load(f)
             try:
-                validate(pushcard, schema)
-            except ValidationError as e:
+                with open(schema_path) as f:
+                    schema = json.load(f)
+                try:
+                    validate(pushcard, schema)
+                except ValidationError as e:
+                    log_json(
+                        stage="cards.schema_error",
+                        error=str(e),
+                        type=card_type
+                    )
+                    # Mark as degraded but continue push
+                    payload["meta"]["degrade"] = True
+                    pushcard.setdefault("states", {})["degrade"] = True
+                    cards_render_fail_total.inc({"type": card_type, "reason": "schema_invalid"})
+                    # Continue
+            except Exception as e:
+                # Any schema loading/resolution error → log and continue (do not fail pipeline)
                 log_json(
                     stage="cards.schema_error",
                     error=str(e),
                     type=card_type
                 )
-                # Mark as degraded but continue push
                 payload["meta"]["degrade"] = True
-                pushcard["states"]["degrade"] = True
-                cards_render_fail_total.inc({"type": card_type, "reason": "schema_invalid"})
-                # Continue with degraded push
+                pushcard.setdefault("states", {})["degrade"] = True
 
         # 8. Push to channel
         if channel == "tg":
@@ -239,7 +251,7 @@ def render_and_push(signal: Dict[str, Any],
             result = notifier.send_message(
                 chat_id=channel_id,
                 text=rendered_text,
-                parse_mode="Markdown",
+                parse_mode="HTML",
                 event_key=event_key
             )
 

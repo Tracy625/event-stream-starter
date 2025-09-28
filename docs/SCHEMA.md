@@ -3,6 +3,7 @@ Database Schema Specification
 TL;DR
 • Current Alembic Version: 013
 • Recent Changes:
+• 2025-09-26 (P1-2): Topic推送链路完成，events.topic_hash/topic_entities和signals.topic_*字段已在生产使用
 • 2025-08-26 (Day7): signals 扩展 goplus 字段（goplus_cache 表见 Rev 005）
 • 2025-08-31 (Day8): 新增 configs/x_kol.yaml 与验收脚本 verify_x_kol.py；raw_posts 使用 metadata JSON 扩展存储 tweet_id 等字段，无数据库迁移
 • 2025-08-25 (Day6): events 表新增精炼结果与执行元数据列（refined*\* 与 refine*\*），新增 2 个索引；读路径不依赖新列，向后兼容
@@ -55,7 +56,8 @@ events
 说明
 • Day1 建表（含 type/summary/evidence/impacted*assets/heat*_ 等，以下标注为 legacy）
 • Day2 增加 score
-• Day5 扩展事件聚合与验证：新增 symbol/token*ca/topic_hash/time_bucket_start/evidence_count/candidate_score/keywords_norm/version/last_sentiment/last_sentiment_score + 2 索引
+• Day5 扩展事件聚合与验证：新增 symbol/token_ca/topic_hash/time_bucket_start/evidence_count/candidate_score/keywords_norm/version/last_sentiment/last_sentiment_score + 2 索引
+• P1-2 (2025-09-26)：topic_hash 和 topic_entities 已在生产使用，存储话题检测结果
 • Day6 接入 Mini-LLM Refiner：新增 refined*_ 与 refine\_\* 列，记录精炼输出、延迟与状态
 • 采用幂等迁移，旧字段保留，读路径不依赖新列
 
@@ -139,13 +141,13 @@ signals
     • dex_volume_1h DOUBLE PRECISION (Day1)
     • heat_slope DOUBLE PRECISION (Day11)
     • ts TIMESTAMPTZ DEFAULT now() (Day1)
-    • topic_id TEXT (Day9)
-    • topic_entities TEXT[] (Day9)
+    • topic_id TEXT (Day9, P1-2：用于存储话题标识)
+    • topic_entities TEXT[] (Day9, P1-2：从events表同步)
     • topic_keywords TEXT[] (Day9)
     • topic_slope_10m DOUBLE PRECISION (Day9)
     • topic_slope_30m DOUBLE PRECISION (Day9)
     • topic_mention_count INTEGER (Day9)
-    • topic_confidence DOUBLE PRECISION (Day9)
+    • topic_confidence DOUBLE PRECISION (Day9, P1-2：话题置信度评分)
     • state TEXT NOT NULL DEFAULT 'candidate' CHECK (state IN ('candidate','verified','downgraded')) (Day12)
     • onchain_asof_ts TIMESTAMPTZ (Day12) — 链上特征评估的 as_of 时间
     • onchain_confidence NUMERIC(4,3) (Day12) — 规则评估置信度，三位小数

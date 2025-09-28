@@ -564,6 +564,62 @@
 
 ================================================================
 
+## P1-2 — Topic 推送链路完成 (2025-09-26)
+
+### 实现要点
+
+- **Topic检测集成**：`MemeableTopicDetector` 在 `demo_ingest.py` 中实现，使用KeyBERT提取实体
+- **Topic ID生成**：SHA1哈希算法 `t.{sha1(sorted_entities)[:12]}`
+- **数据库存储**：events表新增 `topic_hash` 和 `topic_entities` 字段（已存在）
+- **信号扫描任务**：`worker/jobs/topic_signal_scan.py` - 扫描events生成signals（Celery Beat每5分钟）
+- **聚合任务优化**：`worker/jobs/topic_aggregate.py` - 支持PostgreSQL/SQLite，24小时窗口聚合
+- **推送触发**：aggregate_topics末尾直接触发推送（强耦合上线版）
+- **去重机制**：Redis key `topic:dedup:{topic_id}` TTL=3600秒
+
+### 运行验收
+
+- Topic检测与存储
+  ```bash
+  # 运行demo ingestion（含topic检测）
+  docker compose -f infra/docker-compose.yml exec -T api python scripts/demo_ingest.py
+  # 验证events表中的topic数据
+  docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "SELECT event_key, topic_hash, topic_entities FROM events WHERE topic_hash IS NOT NULL;"
+  ```
+
+- Topic信号扫描
+  ```bash
+  # 手动运行扫描
+  docker compose -f infra/docker-compose.yml exec -T worker python -c "from worker.jobs.topic_signal_scan import scan_topic_signals; print(scan_topic_signals.__wrapped__())"
+  # 验证signals表
+  docker compose -f infra/docker-compose.yml exec -T db psql -U app -d app -c "SELECT COUNT(*) FROM signals WHERE market_type='topic';"
+  ```
+
+- Topic聚合与推送
+  ```bash
+  # 手动运行聚合（含推送）
+  export TOPIC_PUSH_MIN_MENTIONS=2
+  docker compose -f infra/docker-compose.yml exec -T -e TOPIC_PUSH_MIN_MENTIONS=2 worker python -c "from worker.jobs.topic_aggregate import aggregate_topics; print(aggregate_topics.__wrapped__())"
+  # 查看推送日志
+  docker compose -f infra/docker-compose.yml logs worker --tail 100 | grep "topic.push"
+  # 验证Redis去重
+  docker compose -f infra/docker-compose.yml exec -T redis redis-cli keys "topic:dedup:*"
+  ```
+
+### 必需配置（.env）
+  ```bash
+  TELEGRAM_SANDBOX_CHAT_ID=your_chat_id  # 必需：Telegram频道ID
+  TOPIC_PUSH_MIN_MENTIONS=3              # 可选：最小提及次数（默认3）
+  TOPIC_PUSH_COOLDOWN_SEC=3600           # 可选：去重时间（默认3600秒）
+  TOPIC_PUSH_ENABLED=true                # 可选：启用推送（默认true）
+  ```
+
+### 测试覆盖
+- 单元测试：`pytest tests/test_topic_unit.py` （6个测试）
+- 集成测试：`pytest tests/test_topic_integration.py` （4个测试）
+- 性能测试：`pytest tests/test_topic_performance.py` （5个测试）
+
+================================================================
+
 ## Day9.2 — Primary 卡门禁 + 文案模板改造 (2025-09-05)
 
 ### 实现要点
@@ -803,6 +859,78 @@ docker compose -f infra/docker-compose.yml logs api | egrep '"stage":"bq\\.(dry_
   make onchain-verify-once EVENT_KEY=demo_cardc
   # Expected output: {"scanned": 1, "evaluated": 1, "updated": 0 or 1}
   ```
+
+================================================================
+
+## Day10 — 就绪探针与可观测最小集 (2025-09-28)
+
+### 健康与就绪
+
+- Liveness（存活）
+  ```bash
+  curl -s http://localhost:8000/healthz | jq .
+  ```
+- Readiness（就绪：DB/Redis/队列）
+  ```bash
+  # 期望 200 且响应头含 no-store
+  curl -s -i http://localhost:8000/readyz | sed -n '1,5p'
+  curl -s -I http://localhost:8000/readyz | grep -i 'Cache-Control'
+  ```
+
+### 指标检查（/metrics）
+
+- 关键指标存在性（容器重启、队列 backlog、就绪延迟、onchain 并发）
+  ```bash
+  curl -s http://localhost:8000/metrics | egrep \
+   'container_restart_total|celery_queue_backlog|celery_queue_backlog_warn_total|readyz_latency_ms_' \
+   | sed -n '1,10p'
+
+  curl -s http://localhost:8000/metrics | egrep \
+   'onchain_lock_(acquire|release|wait|hold|expired)|onchain_state_cas_conflict_total|onchain_process_ms_bucket' \
+   | sed -n '1,10p'
+  ```
+
+### 队列 backlog 观测（Celery 默认队列）
+
+- 读长度（不建议在生产随意写入）
+  ```bash
+  docker compose -f infra/docker-compose.yml exec -T redis redis-cli LLEN celery
+  ```
+- 阈值（看板用）
+  ```bash
+  # 默认阈值，亦可在部署中配置
+  echo "CELERY_BACKLOG_WARN=${CELERY_BACKLOG_WARN:-100}"
+  ```
+
+### 环境与回滚开关（on-chain 并发）
+
+```bash
+docker compose -f infra/docker-compose.yml exec -T api sh -lc \
+  'echo ONCHAIN_LOCK_ENABLE=$ONCHAIN_LOCK_ENABLE; echo ONCHAIN_CAS_ENABLE=$ONCHAIN_CAS_ENABLE'
+```
+
+### Compose 健康探针（/readyz）
+
+```bash
+sed -n '60,90p' infra/docker-compose.yml | nl -ba | sed -n '1,40p'
+```
+
+### 备份演练（摘要）
+
+- 详见 docs/ops.md；最小示例：
+  ```bash
+  # 导出到日期命名文件
+  pg_dump -U $PGUSER -h $PGHOST -p ${PGPORT:-5432} $PGDB > backup_$(date +%F).sql
+  # 恢复到 ${PGDB}_test 库
+  createdb -U $PGUSER -h $PGHOST -p ${PGPORT:-5432} ${PGDB}_test || true
+  psql -U $PGUSER -h $PGHOST -p ${PGPORT:-5432} -d ${PGDB}_test -f backup_$(date +%F).sql
+  ```
+
+### 预期
+
+- /readyz 200；断开 Postgres 或 Redis 时 503，恢复后 200
+- /metrics 可见：container_restart_total、celery_queue_backlog、readyz_latency_ms_bucket、onchain_* 系列
+- backlog ≥ 阈值时出现 `queue.backlog.warn` 日志与 `celery_queue_backlog_warn_total` 递增
 
 - Expert view dryrun (24h window by default)
 

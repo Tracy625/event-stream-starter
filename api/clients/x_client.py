@@ -176,11 +176,11 @@ class GraphQLXClient(XClient):
                         log_json(stage="x.fetch.error", backend="graphql", error="user_id_not_found", handle=handle)
                         return []
                     items = self._fetch_user_tweets(client, user_id, since_id=since_id)
-            tweets = self._normalize_items(handle, items)
-            if isinstance(limit, int) and limit > 0:
-                tweets = tweets[:limit]
-            log_json(stage="x.fetch.success", backend="graphql", count=len(tweets), handle=handle)
-            return tweets
+                    tweets = self._normalize_items(handle, items)
+                    if isinstance(limit, int) and limit > 0:
+                        tweets = tweets[:limit]
+                    log_json(stage="x.fetch.success", backend="graphql", count=len(tweets), handle=handle)
+                    return tweets
                     
             except httpx.TimeoutException:
                 retries += 1
@@ -377,8 +377,11 @@ class ApifyXClient(XClient):
     """Apify implementation via Tweet Scraper actor."""
 
     def __init__(self):
-        self.token = os.getenv("APIFY_TOKEN", "").strip()
-        self.actor = os.getenv("APIFY_TWEET_SCRAPER_ACTOR", "apify/tweet-scraper-v2").strip()
+        # Support both APIFY_TOKEN and APIFY_API_TOKEN
+        self.token = (os.getenv("APIFY_TOKEN", "").strip()
+                      or os.getenv("APIFY_API_TOKEN", "").strip())
+        # Default to official v2 actor name
+        self.actor = os.getenv("APIFY_TWEET_SCRAPER_ACTOR", "apidojo/tweet-scraper").strip()
         self.default_country = os.getenv("APIFY_DEFAULT_COUNTRY", "US")
         self.timeout_s = int(os.getenv("X_REQUEST_TIMEOUT_SEC", "5"))
         self.max_retries = int(os.getenv("X_RETRY_MAX", "2"))
@@ -388,6 +391,21 @@ class ApifyXClient(XClient):
         self.metrics_lat = metrics_core.histogram(
             "x_backend_latency_ms", "X backend latency in ms", buckets=[50,100,200,500,1000,2000,5000]
         )
+        # Run mode: 'poll' (start+poll dataset) or 'sync' (single run-sync call)
+        rm = (os.getenv("APIFY_RUN_MODE", "") or "").strip().lower()
+        if not rm:
+            # Backward-compat boolean toggle
+            rs = (os.getenv("APIFY_RUN_SYNC", "") or "").strip().lower() in ("1","true","yes","on")
+            rm = "sync" if rs else "poll"
+        self.run_mode = rm if rm in ("poll","sync") else "poll"
+
+    def _actor_path(self) -> str:
+        """Return actor identifier formatted for Apify API path.
+        Accepts env like 'user/actor' or 'user~actor' and normalizes to 'user~actor'.
+        """
+        act = (self.actor or "").strip()
+        # Apify API expects ~ between username and actor name
+        return act.replace("/", "~")
 
     def _api_url(self, path: str, **params) -> str:
         base = "https://api.apify.com/v2"
@@ -403,9 +421,10 @@ class ApifyXClient(XClient):
 
     def _start_run(self, client: httpx.Client, handle: str, limit: int) -> Tuple[str, str]:
         # Start actor run; return (runId, datasetId)
-        url = self._api_url(f"/acts/{self.actor}/runs")
+        url = self._api_url(f"/acts/{self._actor_path()}/runs")
+        # apidojo/tweet-scraper expects twitterHandles; keep tweetsDesired for limiting
         payload = {
-            "handles": [handle],
+            "twitterHandles": [handle],
             "tweetsDesired": max(1, min(50, limit or 20)),
             "maxRequestRetries": 1,
             "countryCode": self.default_country,
@@ -430,6 +449,31 @@ class ApifyXClient(XClient):
             return []
         return items
 
+    def _run_sync_items(self, client: httpx.Client, handle: str, limit: int) -> List[Dict[str, Any]]:
+        """Run actor in sync mode and return dataset items directly (single request).
+        Cost-efficient: avoids dataset polling.
+        """
+        # Apply hard cap on returned items to control billing
+        max_items = max(1, min(max(1, (limit or 20) * int(os.getenv("APIFY_ITEMS_MAX_MULTIPLIER", "1"))), 200))
+        url = self._api_url(
+            f"/acts/{self._actor_path()}/run-sync-get-dataset-items",
+            limit=max_items,
+        )
+        payload = {
+            "twitterHandles": [handle],
+            "tweetsDesired": max(1, min(50, limit or 20)),
+            "maxRequestRetries": 1,
+            "countryCode": self.default_country,
+            # Best-effort hints; actor may ignore unknown fields
+            "maxItems": max_items,
+            "sort": "Latest",
+        }
+        r = client.post(url, json=payload)
+        r.raise_for_status()
+        data = r.json()
+        # Expect a list of items
+        return data if isinstance(data, list) else []
+
     def _observe(self, elapsed_ms: float, status: str, op: str):
         self.metrics_lat.observe(elapsed_ms, labels={"backend": "apify", "op": op})
         self.metrics_req.inc(labels={"backend": "apify", "op": op, "status": status})
@@ -445,17 +489,20 @@ class ApifyXClient(XClient):
             log_json(stage="x.fetch.request", backend="apify", handle=handle, limit=limit)
             retries = 0
             with httpx.Client(timeout=self.timeout_s) as client:
-                run_id, ds_id = self._start_run(client, handle, limit)
-                items: List[Dict[str, Any]] = []
-                # Poll up to poll_attempts
-                for i in range(self.poll_attempts):
-                    try:
-                        items = self._fetch_items(client, ds_id, limit)
-                        if items:
-                            break
-                        time.sleep(self.poll_sleep_s)
-                    except httpx.TimeoutException:
-                        pass
+                if self.run_mode == "sync":
+                    items = self._run_sync_items(client, handle, limit)
+                else:
+                    run_id, ds_id = self._start_run(client, handle, limit)
+                    items: List[Dict[str, Any]] = []
+                    # Poll up to poll_attempts
+                    for i in range(self.poll_attempts):
+                        try:
+                            items = self._fetch_items(client, ds_id, limit)
+                            if items:
+                                break
+                            time.sleep(self.poll_sleep_s)
+                        except httpx.TimeoutException:
+                            pass
                 tweets = [map_apify_tweet(it) for it in (items or [])]
                 if isinstance(limit, int) and limit > 0:
                     tweets = tweets[:limit]
@@ -546,6 +593,9 @@ class MultiSourceXClient(XClient):
             pass
 
     def _order_for_op(self, op: str) -> List[Tuple[str, XClient]]:
+        # Prefer explicit instance order if provided
+        if getattr(self, "backends", None):
+            return self.backends
         order = _parse_backends_env(op)
         pairs: List[Tuple[str, XClient]] = []
         for b in order:
@@ -553,7 +603,15 @@ class MultiSourceXClient(XClient):
                 pairs.append((b, get_x_client(b)))
             except Exception:
                 continue
-        return pairs or self.backends
+        return pairs
+
+    def _supports_limit(self, client: XClient) -> bool:
+        """Detect whether backend fetch_user_tweets accepts a 'limit' arg (backward compat for stubs/tests)."""
+        try:
+            import inspect
+            return 'limit' in inspect.signature(client.fetch_user_tweets).parameters
+        except Exception:
+            return True
 
     def _merge_profile_fields(self, primary: Dict[str, Any], secondary: Dict[str, Any], backend: str, source_map: Dict[str, str]) -> Dict[str, Any]:
         if not secondary:
@@ -605,7 +663,10 @@ class MultiSourceXClient(XClient):
                         return res
         # Serial try
         for b, c in order:
-            res = self._try(b, c, "tweets", lambda: c.fetch_user_tweets(handle, since_id, limit))
+            if self._supports_limit(c):
+                res = self._try(b, c, "tweets", lambda: c.fetch_user_tweets(handle, since_id, limit))
+            else:
+                res = self._try(b, c, "tweets", lambda: c.fetch_user_tweets(handle, since_id))
             if res:
                 _cache_set(cache_key, res, self.cache_ttl)
                 return res
