@@ -10,8 +10,10 @@
 🟢 **低风险信号**
 {%- endif %}
 
-**候选代币:** {{ card_data.token_info.symbol }} ({{ card_data.token_info.chain | upper }})
+**候选代币:** {{ card_data.token_info.symbol | default('UNKNOWN') }} ({{ card_data.token_info.chain | default('eth') | upper }})
+{%- if card_data.token_info.ca_norm %}
 **合约地址:** `{{ card_data.token_info.ca_norm[:6] }}...{{ card_data.token_info.ca_norm[-4:] }}`
+{%- endif %}
 
 {#- Risk warning block - only show for non-green -#}
 {%- if card_data.risk_level in ['red', 'yellow', 'gray'] %}
@@ -40,3 +42,17 @@ _{{ card_data.legal_note or "本信息仅为风险线索与技术判断，不构
 {#- Hidden debug block for rules_fired and risk_source -#}
 <!-- Debug: rules_fired = {{ card_data.rules_fired | tojson if card_data.rules_fired else '[]' }} -->
 <!-- Debug: risk_source = {{ card_data.sources.security_source if card_data.sources.security_source else '' }} -->
+
+{#- Ambiguous candidates block -#}
+{%- if card_data.ambiguous_candidates and (card_data.ambiguous_candidates | length) >= 2 %}
+
+———
+🔎 **歧义候选（待确认）**
+{%- for c in card_data.ambiguous_candidates %}
+• {{ loop.index }}. {{ c.chain | upper }} `{{ c.ca[:6] }}...{{ c.ca[-4:] }}`  
+  LP: ${{ "{:,.0f}".format(c.lp_usd) if c.lp_usd else "?" }} | 分数: {{ '%.2f'|format(c.score) }} | Δt: {{ c.t_delta_min if c.t_delta_min is not none else '?' }}m  
+  {{ '🟩' if c.evidence_strength=='strong' else ('🟨' if c.evidence_strength=='medium' else '⬜️') }} {{ c.pair_url }}
+{%- endfor %}
+_说明：候选池待确认，暂不下“可买”结论_
+
+{%- endif %}

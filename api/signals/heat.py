@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, Tuple
 from sqlalchemy import text as sa_text
 from api.core.metrics_store import log_json, timeit
+from api.core.metrics import heat_persist_attempt_total, heat_persist_eventkey_notfound_total
 
 # EMA state cache (in-memory for simplicity)
 _ema_cache = {}
@@ -469,6 +470,12 @@ def persist_heat(db, *, token: Optional[str] = None, token_ca: Optional[str] = N
     Returns:
         True if persisted successfully, False otherwise
     """
+    # Count attempt
+    try:
+        heat_persist_attempt_total.inc()
+    except Exception:
+        pass
+
     # Check if persistence is enabled
     enable_persist = os.getenv("HEAT_ENABLE_PERSIST", "false").lower() in ("true", "1", "yes", "on")
     if not enable_persist:
@@ -497,11 +504,25 @@ def persist_heat(db, *, token: Optional[str] = None, token_ca: Optional[str] = N
         if event_key:
             resolved_from = "token_ca"
     
-    # Fallback to symbol if strict_match allows and no token_ca match
+    # Fallback to symbol if explicitly allowed by env; default disabled to avoid symbol-collision
     if not event_key and token and not strict_match:
-        event_key = resolve_event_key_by_symbol(db, token)
-        if event_key:
-            resolved_from = "symbol"
+        allow_symbol_fb = os.getenv("HEAT_ALLOW_SYMBOL_FALLBACK", "false").lower() in ("1","true","yes","on")
+        if allow_symbol_fb:
+            event_key = resolve_event_key_by_symbol(db, token)
+            if event_key:
+                resolved_from = "symbol"
+        else:
+            log_json(
+                stage="signals.heat.persist",
+                token=token,
+                token_ca=token_ca,
+                persisted=False,
+                reason="symbol_fallback_disabled",
+                strict_match=strict_match,
+                match_key="event_key",
+                resolved_from=resolved_from
+            )
+            return False
     
     # If no event_key resolved, cannot persist
     if not event_key:
@@ -515,6 +536,10 @@ def persist_heat(db, *, token: Optional[str] = None, token_ca: Optional[str] = N
             match_key="event_key",
             resolved_from=resolved_from
         )
+        try:
+            heat_persist_eventkey_notfound_total.inc()
+        except Exception:
+            pass
         return False
     
     try:

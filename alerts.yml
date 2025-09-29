@@ -61,3 +61,27 @@ rules:
     severity: critical
     notify: default
     description: "HTTP 5xx error rate exceeds 1% over 5 minutes"
+
+  # Heat persist: event_key not found spike (approximation of rate)
+  - name: heat_eventkey_not_found_spike
+    source: metrics
+    expr: error_delta               # use delta count as approximation in window
+    metric: heat_persist_eventkey_notfound_total
+    threshold: 5                    # >5 次/5 分钟
+    window_seconds: 300
+    silence_seconds: 900
+    severity: warn
+    notify: default
+    description: "Heat persist 'event_key not found' spike (>5/5m)"
+
+  # CA hunter: ambiguous spike (approximation of share)
+  - name: ca_hunter_ambiguous_spike
+    source: metrics
+    expr: error_delta               # use delta count as approximation in window
+    metric: ca_hunter_ambiguous_total
+    threshold: 5                    # >5 次/5 分钟
+    window_seconds: 300
+    silence_seconds: 900
+    severity: warn
+    notify: default
+    description: "CA hunter ambiguous decisions spike (>5/5m)"

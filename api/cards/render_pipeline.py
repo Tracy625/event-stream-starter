@@ -195,6 +195,48 @@ def render_and_push(signal: Dict[str, Any],
             )
             return {"success": False, "error": f"Generation failed: {str(e)}"}
 
+        # 3.1 Enforce SOL green guardrail: do not allow green on Solana before light checks exist
+        try:
+            token_info = payload.get("context", {}).get("token_info", {})
+            if (token_info.get("chain") == "sol") and (payload.get("context", {}).get("risk_level") == "green"):
+                payload["context"]["risk_level"] = "yellow"
+                payload["context"].setdefault("states", {})["degrade"] = True
+                log_json(stage="cards.guardrail.sol_green_blocked", event_key=payload.get("meta", {}).get("event_key"))
+        except Exception:
+            pass
+
+        # 3.2 Optional 30m dedup to avoid short-window duplicates per type (pre-send control)
+        try:
+            if channel == "tg":
+                from api.cache import get_redis_client
+                rc = get_redis_client()
+                if rc is not None:
+                    meta = payload.get("meta", {})
+                    ctx = payload.get("context", {})
+                    ek = meta.get("event_key") or signal.get("event_key") or ""
+                    token_info = ctx.get("token_info", {})
+                    ca = token_info.get("ca_norm") or token_info.get("ca")
+                    event_or_ca = (ca or ek).lower()
+                    t = signal.get("type", card_type)
+                    # derive a coarse reason bucket
+                    reason_bucket = "general"
+                    try:
+                        if ctx.get("ambiguous_candidates"):
+                            reason_bucket = "ambiguous"
+                        elif t == "secondary" and str(ctx.get("risk_note", "")).startswith("代理触发"):
+                            reason_bucket = "secondary_proxy"
+                        elif t == "market_risk" or ctx.get("rules_fired"):
+                            reason_bucket = "market_risk"
+                    except Exception:
+                        pass
+                    bucket = int(now.timestamp() // 1800)
+                    dedup_key = f"cards:dedup:{event_or_ca}:{t}:{reason_bucket}:{bucket}"
+                    if not rc.set(dedup_key, "1", nx=True, ex=7200):
+                        log_json(stage="cards.short_dedup.skip", key=dedup_key)
+                        return {"success": False, "error": "Short-window dedup", "dedup": True}
+        except Exception:
+            pass
+
         # 4. Check deduplication
         event_key = payload["meta"]["event_key"]
         if event_key:
