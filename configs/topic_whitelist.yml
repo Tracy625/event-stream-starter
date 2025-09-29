@@ -1,2 +1,25 @@
-::bad_yaml:
-  - ???
+# Topic whitelist —命中后在判定中给予轻微加权（+0.05）
+# 注意：文件为有效 YAML，供 TopicAnalyzer 加载；key 必须为 whitelist
+whitelist:
+  # 行业/大事件
+  - etf
+  - halving
+  - election
+  - cz
+  - sec
+  - bitcoin etf
+
+  # 生态/热点
+  - layer2
+  - arbitrum
+  - optimism
+  - base
+  - blast
+  - inscription
+  - ordinals
+
+  # 常见高价值实体
+  - pepe
+  - btc
+  - eth
+  - sol
