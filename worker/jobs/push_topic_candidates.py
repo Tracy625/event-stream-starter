@@ -94,11 +94,13 @@ def format_topic_message(c: Dict[str, Any]) -> str:
     ents = c.get("entities") or []
     ents_show = ", ".join(ents[:5]) if ents else "(无)"
     latest_iso = (c.get("latest_ts") or "").isoformat() if hasattr(c.get("latest_ts"), "isoformat") else str(c.get("latest_ts", ""))
+    # 最小文案 + 风险提示（避免引导交易与仿冒）
     return (
         f"🔥 热点话题：{ents_show}\n"
         f"📊 24h 提及：{c.get('mention_count', 0)}\n"
         f"🏷️ 实体：{ents_show}\n"
-        f"🕒 最新：{latest_iso}"
+        f"🕒 最新：{latest_iso}\n"
+        f"⚠️ 未落地为币，谨防仿冒"
     )
 
 def push_to_telegram(text: str) -> Dict[str, Any]:
