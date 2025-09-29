@@ -726,11 +726,11 @@ MVP 切片（3–4 小时）
 • 如果你考虑到你项目的节奏（Day18 就是规则引擎 + 建议器），这个模块未来一定要撑住，那只能做稳健版。
 
 Day19 ｜卡片 Schema + LLM 摘要（复用 Day6，限定用途）
-• 目标：定版 cards.schema.json；LLM 只产 summary、risk_note 两短字段。
+• 目标：定版 cards.schema.json；LLM 只产 summary、risk*note 两短字段。
 • 产物：cards/build.py，/cards/preview 路由。
 • 复用：Day6 JSON‑schema 校验器；Day10 事件证据。
 • 验收：
-curl /cards/preview?event_key=... 通过 schema 校验，字段包含 goplus._ 与 dex._。
+curl /cards/preview?event_key=... 通过 schema 校验，字段包含 goplus.* 与 dex.\_。
 • 降级：LLM 超时 → 模板摘要（可读但无修辞）。
 
 Day20 ｜ Telegram 推送（新增）

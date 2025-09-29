@@ -6,8 +6,10 @@ Standardizes raw tweets from X clients into unified format with light parsing.
 
 import os
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from api.core.metrics_store import log_json
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def normalize_tweet(raw_tweet: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -62,11 +64,9 @@ def normalize_tweet(raw_tweet: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         urls = [urls] if urls else []
     urls = [str(u) for u in urls if u]
     
-    # Optional URL expansion (disabled by default for MVP)
-    if os.getenv("X_ENABLE_LINK_EXPAND", "false").lower() == "true":
-        # URL expansion with 2s timeout would go here
-        # For MVP, skip expansion
-        pass
+    # Optional URL expansion (enabled by env)
+    if os.getenv("X_ENABLE_LINK_EXPAND", "false").lower() == "true" and urls:
+        urls = _expand_urls_with_budget(urls)
     
     # Extract contract address (EVM format)
     token_ca = None
@@ -103,3 +103,48 @@ def normalize_tweet(raw_tweet: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             has_symbol=bool(symbol))
     
     return normalized
+
+
+def _expand_urls_with_budget(urls: List[str]) -> List[str]:
+    """Expand short URLs with per-URL and total budget constraints.
+
+    - Per URL timeout: 2s (HEAD then GET fallback)
+    - Total budget per tweet: 5s
+    - Concurrency: 4
+    - Failure-safe: return original URL on any error
+    """
+    per_url_timeout = float(os.getenv("X_URL_EXPAND_TIMEOUT_S", "2"))
+    total_budget_s = float(os.getenv("X_URL_EXPAND_TOTAL_S", "5"))
+    max_workers = int(os.getenv("X_URL_EXPAND_WORKERS", "4"))
+
+    sess = requests.Session()
+
+    def resolve(u: str) -> str:
+        try:
+            # Try HEAD first (fast)
+            r = sess.head(u, allow_redirects=True, timeout=per_url_timeout)
+            if r.url:
+                return r.url
+        except Exception:
+            pass
+        try:
+            r = sess.get(u, allow_redirects=True, timeout=per_url_timeout)
+            return r.url or u
+        except Exception:
+            return u
+
+    out = list(urls)
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(resolve, u): i for i, u in enumerate(urls)}
+            deadline = requests.utils.default_timer() + total_budget_s
+            for fut in as_completed(futures, timeout=total_budget_s):
+                i = futures[fut]
+                try:
+                    out[i] = fut.result(timeout=max(0.0, deadline - requests.utils.default_timer()))
+                except Exception:
+                    out[i] = urls[i]
+    except Exception:
+        # Budget exceeded or thread pool error: fall back to original
+        return urls
+    return out

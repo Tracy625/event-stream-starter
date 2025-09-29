@@ -6,6 +6,10 @@ from api.tasks.beat import heartbeat as beat_heartbeat
 from celery.schedules import crontab
 import json
 from .jobs.x_kol_poll import run_once as kol_poll_once
+from .jobs.events_compact import run_once as events_compact_once
+from .jobs.ca_hunter_scan import run_once as ca_hunter_once
+from api.jobs.goplus_scan import goplus_scan as goplus_scan_once
+from .jobs.secondary_proxy_scan import run_once as secondary_proxy_once
 
 @app.task
 def ping():
@@ -63,6 +67,21 @@ def x_kol_poll_once():
     """Run KOL polling job once (scheduled by beat)."""
     return kol_poll_once()
 
+@app.task(name="events.compact_5m")
+def events_compact_task():
+    """Compact raw_posts to events (5m)."""
+    return events_compact_once()
+
+@app.task(name="ca_hunter.scan_5m")
+def ca_hunter_scan_task():
+    """Run CA hunter MVP scan (5m)."""
+    return ca_hunter_once()
+
+@app.task(name="worker.tasks.goplus_scan_periodic")
+def goplus_scan_periodic():
+    """Periodic GoPlus scan to enrich signals."""
+    return goplus_scan_once()
+
 # Celery Beat schedule configuration
 app.conf.beat_schedule = {
     'onchain-verify-every-minute': {
@@ -81,5 +100,25 @@ app.conf.beat_schedule = {
         'task': 'x.kol.poll_once',
         'schedule': 300.0,  # every 5 minutes
         'options': {'queue': 'x_polls'},
+    },
+    'events-compact-every-5min': {
+        'task': 'events.compact_5m',
+        'schedule': 300.0,
+        'options': {'queue': 'signals'},
+    },
+    'ca-hunter-scan-every-5min': {
+        'task': 'ca_hunter.scan_5m',
+        'schedule': 300.0,
+        'options': {'queue': 'signals'},
+    },
+    'goplus-scan-every-15min': {
+        'task': 'worker.tasks.goplus_scan_periodic',
+        'schedule': 900.0,
+        'options': {'queue': 'signals'},
+    },
+    'secondary-proxy-scan-every-5min': {
+        'task': 'secondary.proxy_scan_5m',
+        'schedule': 300.0,
+        'options': {'queue': 'signals'},
     },
 }

@@ -60,7 +60,7 @@
   - api/clients/goplus.py:68: `BASE_URL = "https://api.gopluslabs.io"`
   - infra/docker-compose.yml:49: `SECURITY_BACKEND: goplus`
   - .env:16: `SECURITY_BACKEND=rules`
-  - .env:12: `GOPLUS_API_KEY=hWm73Gg43NDFpcGZRnjA` (真实 API key)
+  - .env:12: `GOPLUS_API_KEY=12345678945613` (真实 API key)
 - **推断理由**：有真实 API key，但 .env 配置为 rules 模式（未启用 GoPlus）
 
 ### DEX

@@ -24,10 +24,10 @@ beat_schedule = {
         "options": {"queue": "signals"},
     },
 
-    # 每小时执行一次：聚合 topics
+    # 每 5 分钟执行一次：聚合 topics（推送阈值与冷却由环境变量控制）
     "aggregate_topics": {
         "task": "worker.jobs.topic_aggregate.aggregate_topics",
-        "schedule": crontab(minute=0),  # 每小时整点
+        "schedule": crontab(minute="*/5"),
         "options": {"queue": "aggregation"},
     }
 }
@@ -45,6 +45,7 @@ task_routes = {
     # 新增路由
     "worker.jobs.topic_signal_scan.scan_topic_signals": {"queue": "signals"},
     "worker.jobs.topic_aggregate.aggregate_topics": {"queue": "aggregation"},
+    "secondary.proxy_scan_5m": {"queue": "signals"},
 }
 
 # Task retry configuration

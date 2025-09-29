@@ -11,8 +11,8 @@ from celery.exceptions import MaxRetriesExceededError
 from api.cache import get_redis_client
 from api.cards.render_pipeline import render_and_push
 from api.utils.logging import log_json
-from api.database import get_db_session
-from api.db.repositories.outbox_repo import OutboxRepo
+from api.database import with_db
+from api.db.models.push_outbox import PushOutbox, OutboxStatus
 
 # Use same app instance as other workers
 from worker.app import app
@@ -140,23 +140,21 @@ def _send_to_dlq(signal: Dict[str, Any], result: Dict[str, Any]):
         result: Failure result
     """
     try:
-        with get_db_session() as db:
-            repo = OutboxRepo(db)
-
+        with with_db() as db:
             # Create outbox entry with DLQ status
-            repo.create({
-                "channel_id": signal.get("channel_id", ""),
-                "event_key": signal.get("event_key", ""),
-                "payload_json": json.dumps(signal),
-                "status": "dlq",  # Special status for DLQ
-                "retry_count": signal.get("attempt", 0),
-                "last_error": json.dumps(result)
-            })
-
-            log_json(
-                stage="cards.dlq.saved",
-                event_key=signal.get("event_key")
+            row = PushOutbox(
+                channel_id=int(signal.get("channel_id") or 0),
+                thread_id=None,
+                event_key=signal.get("event_key", ""),
+                payload_json=signal,
+                status=OutboxStatus.DLQ.value,
+                attempt=int(signal.get("attempt", 0)),
+                last_error=json.dumps(result)
             )
+            db.add(row)
+            db.flush()
+
+            log_json(stage="cards.dlq.saved", event_key=signal.get("event_key"), outbox_id=row.id)
     except Exception as e:
         log_json(
             stage="cards.dlq.error",

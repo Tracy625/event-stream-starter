@@ -212,6 +212,9 @@ class DexProvider:
                     "pair_address": pair.get("pairAddress", ""),
                     "base_token": pair.get("baseToken", {}),
                     "quote_token": pair.get("quoteToken", {}),
+                    # Optional fields used by CA hunter
+                    "pair_created_at": pair.get("pairCreatedAt") or pair.get("createdAt") or pair.get("pair_created_at"),
+                    "txns": pair.get("txns", {}),
                     "source": "dexscreener",
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }

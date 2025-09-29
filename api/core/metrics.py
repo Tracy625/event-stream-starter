@@ -232,6 +232,26 @@ cards_pipeline_latency_ms = histogram(
     [50, 100, 200, 500, 1000, 2000, 5000]
 )
 
+# Heat persistence quality metrics
+heat_persist_attempt_total = counter(
+    "heat_persist_attempt_total",
+    "Number of heat persist attempts"
+)
+heat_persist_eventkey_notfound_total = counter(
+    "heat_persist_eventkey_notfound_total",
+    "Number of heat persist failures due to missing event_key"
+)
+
+# CA hunter quality metrics
+ca_hunter_matched_total = counter(
+    "ca_hunter_matched_total",
+    "Total CA hunter matches (accepted candidates)"
+)
+ca_hunter_ambiguous_total = counter(
+    "ca_hunter_ambiguous_total",
+    "Total CA hunter ambiguous decisions"
+)
+
 # Market risk detection metrics - centralized registration
 rules_market_risk_hits_total = counter(
     "rules_market_risk_hits_total",
@@ -344,5 +364,9 @@ try:
     celery_queue_backlog.set(0.0, labels={"queue": "celery"})
     celery_queue_backlog_warn_total.inc(0)
     readyz_latency_ms.observe(0)
+    heat_persist_attempt_total.inc(0)
+    heat_persist_eventkey_notfound_total.inc(0)
+    ca_hunter_matched_total.inc(0)
+    ca_hunter_ambiguous_total.inc(0)
 except Exception:
     pass
