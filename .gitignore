@@ -67,3 +67,4 @@ infra/secrets/*.json
 scripts/local_dev/*
 !scripts/local_dev/.gitkeep
 !scripts/local_dev/*.example
+guids-gcp/
