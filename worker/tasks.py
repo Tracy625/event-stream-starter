@@ -10,6 +10,8 @@ from .jobs.events_compact import run_once as events_compact_once
 from .jobs.ca_hunter_scan import run_once as ca_hunter_once
 from api.jobs.goplus_scan import goplus_scan as goplus_scan_once
 from .jobs.secondary_proxy_scan import run_once as secondary_proxy_once
+# Ensure registration of non-tasks.py task modules
+from .jobs.topic_signal_scan import scan_topic_signals as _topic_scan_task  # noqa: F401
 
 @app.task
 def ping():
@@ -121,4 +123,21 @@ app.conf.beat_schedule = {
         'schedule': 300.0,
         'options': {'queue': 'signals'},
     },
+    'topic-signal-scan-every-5min': {
+        'task': 'worker.jobs.topic_signal_scan.scan_topic_signals',
+        'schedule': 300.0,
+        'options': {'queue': 'signals'},
+    },
 }
+
+# Print beat schedule queue summary at import time (lightweight sentinel)
+try:
+    from api.core.metrics_store import log_json as _log_json
+    _qs = []
+    for k, v in (app.conf.beat_schedule or {}).items():
+        q = (v or {}).get('options', {}).get('queue')
+        _qs.append({'task': k, 'queue': q})
+    if _qs:
+        _log_json(stage="beat.schedule.queues", entries=_qs)
+except Exception:
+    pass

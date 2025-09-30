@@ -734,7 +734,21 @@ def merge_event_evidence(event_key: str, new_evidence: List[Dict[str, Any]],
         merged = dict(a)
         merged["ref"] = ref_m
         if ts_keep is not None:
-            merged["ts"] = ts_keep
+            # Ensure JSON-serializable timestamp in evidence
+            try:
+                if hasattr(ts_keep, 'isoformat'):
+                    # Normalize to Z suffix for UTC when applicable
+                    ts_str = ts_keep.isoformat()
+                    if ts_str.endswith("+00:00"):
+                        ts_str = ts_str.replace("+00:00", "Z")
+                    merged["ts"] = ts_str
+                elif isinstance(ts_keep, str):
+                    merged["ts"] = ts_keep
+                else:
+                    # Fallback to current UTC time in ISO string
+                    merged["ts"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            except Exception:
+                merged["ts"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         if weight is not None:
             merged["weight"] = weight
         if summary:
