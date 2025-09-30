@@ -23,13 +23,52 @@ def build_engine_from_env() -> Engine:
     if not postgres_url:
         raise ValueError("POSTGRES_URL environment variable not set")
     
-    # Create engine with recommended settings
-    engine = create_engine(
-        postgres_url,
-        echo=False,  # Don't log SQL statements
-        future=True,  # Use SQLAlchemy 2.0 style
-        pool_pre_ping=True,  # Verify connections before using from pool
+    # Optional pool and timeout tuning via env
+    pool_size = os.getenv("SQLALCHEMY_POOL_SIZE")
+    max_overflow = os.getenv("SQLALCHEMY_MAX_OVERFLOW")
+    pool_recycle = os.getenv("SQLALCHEMY_POOL_RECYCLE")
+    pool_timeout = os.getenv("SQLALCHEMY_POOL_TIMEOUT")
+    stmt_timeout_ms = os.getenv("PG_STATEMENT_TIMEOUT_MS")
+
+    create_kwargs = dict(
+        echo=False,
+        future=True,
+        pool_pre_ping=True,
     )
+
+    if pool_size is not None:
+        try:
+            create_kwargs["pool_size"] = int(pool_size)
+        except Exception:
+            pass
+    if max_overflow is not None:
+        try:
+            create_kwargs["max_overflow"] = int(max_overflow)
+        except Exception:
+            pass
+    if pool_recycle is not None:
+        try:
+            create_kwargs["pool_recycle"] = int(pool_recycle)
+        except Exception:
+            pass
+    if pool_timeout is not None:
+        try:
+            create_kwargs["pool_timeout"] = int(pool_timeout)
+        except Exception:
+            pass
+
+    # Per-connection statement timeout (psycopg2)
+    connect_args = {}
+    if stmt_timeout_ms:
+        try:
+            ms = int(stmt_timeout_ms)
+            connect_args["options"] = f"-c statement_timeout={ms}"
+        except Exception:
+            pass
+    if connect_args:
+        create_kwargs["connect_args"] = connect_args
+
+    engine = create_engine(postgres_url, **create_kwargs)
     
     return engine
 

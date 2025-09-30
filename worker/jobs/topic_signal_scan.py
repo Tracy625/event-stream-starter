@@ -60,10 +60,12 @@ def scan_topic_signals():
                 e.candidate_score as topic_confidence,
                 e.last_ts
             FROM events e
-            LEFT JOIN signals s ON e.event_key = s.event_key AND s.market_type = 'topic'
+            LEFT JOIN signals s 
+              ON e.event_key = s.event_key 
+             AND (s.type = 'topic' OR s.market_type = 'topic')
             WHERE e.topic_hash IS NOT NULL
-                AND e.last_ts >= :start_time
-                AND s.id IS NULL
+              AND e.last_ts >= :start_time
+              AND s.id IS NULL
             ORDER BY e.last_ts DESC
             LIMIT :batch_size
         """)
@@ -77,9 +79,15 @@ def scan_topic_signals():
             try:
                 # First check if any signal exists for this event_key
                 check_query = sa_text("""
-                    SELECT id, market_type
-                    FROM signals
-                    WHERE event_key = :event_key
+                    SELECT id, type, market_type
+                      FROM signals
+                     WHERE event_key = :event_key
+                     ORDER BY CASE 
+                                WHEN type = 'topic' THEN 0
+                                WHEN market_type = 'topic' THEN 1
+                                ELSE 2
+                              END
+                     LIMIT 1
                 """)
 
                 existing = session.execute(check_query, {
@@ -87,19 +95,20 @@ def scan_topic_signals():
                 }).mappings().fetchone()
 
                 if existing:
-                    if existing["market_type"] == 'topic':
-                        # Update existing topic signal
+                    # Update existing row (prefer true type='topic'; fallback market_type='topic')
+                    if (existing.get("type") == 'topic') or (existing.get("market_type") == 'topic'):
                         update_query = sa_text("""
                             UPDATE signals SET
+                                type = COALESCE(type, 'topic'),
                                 topic_id = :topic_id,
                                 topic_entities = :topic_entities,
                                 topic_confidence = :topic_confidence,
                                 ts = :ts
-                            WHERE event_key = :event_key AND market_type = 'topic'
+                            WHERE id = :id
                         """)
 
                         result = session.execute(update_query, {
-                            "event_key": row["event_key"],
+                            "id": existing["id"],
                             "topic_id": row["topic_id"],
                             "topic_entities": row["topic_entities"],
                             "topic_confidence": float(row["topic_confidence"]) if row["topic_confidence"] else 0.0,
@@ -114,13 +123,14 @@ def scan_topic_signals():
                         log_json(
                             stage="topic.signal.scan.skip_non_topic",
                             event_key=row["event_key"],
-                            existing_type=existing["market_type"]
+                            existing_type=existing.get("type") or existing.get("market_type")
                         )
                 else:
                     # Insert new topic signal
                     insert_query = sa_text("""
                         INSERT INTO signals (
                             event_key,
+                            type,
                             market_type,
                             topic_id,
                             topic_entities,
@@ -129,11 +139,19 @@ def scan_topic_signals():
                         ) VALUES (
                             :event_key,
                             'topic',
+                            'topic',
                             :topic_id,
                             :topic_entities,
                             :topic_confidence,
                             :ts
                         )
+                        ON CONFLICT (event_key, type)
+                        DO UPDATE SET
+                            market_type = EXCLUDED.market_type,
+                            topic_id = EXCLUDED.topic_id,
+                            topic_entities = EXCLUDED.topic_entities,
+                            topic_confidence = EXCLUDED.topic_confidence,
+                            ts = EXCLUDED.ts
                     """)
 
                     result = session.execute(insert_query, {

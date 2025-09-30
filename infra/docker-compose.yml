@@ -104,7 +104,7 @@ services:
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis}
     restart: always
-    command: sh -lc "celery -A worker.app worker -l info -Q celery,x_polls --concurrency=2"
+    command: sh -lc "celery -A worker.app worker -l info -Q celery,cards,signals,aggregation,outbox,x_polls --prefetch-multiplier 1 --concurrency=2"
     depends_on:
       db:
         condition: service_healthy

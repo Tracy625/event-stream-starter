@@ -14,7 +14,22 @@ app.conf.update(
     result_serializer='json',
     timezone='UTC',
     enable_utc=True,
+    task_acks_late=True,
+    task_acks_on_failure_or_timeout=True,
+    task_reject_on_worker_lost=True,
 )
+
+# Broker transport options (visibility timeout, fanout prefix)
+try:
+    import json as _json
+    _bto = os.getenv("CELERY_BROKER_TRANSPORT_OPTIONS")
+    if _bto:
+        app.conf.broker_transport_options = _json.loads(_bto)
+    else:
+        vt = int(os.getenv("CELERY_VISIBILITY_TIMEOUT", "3600"))
+        app.conf.broker_transport_options = {"visibility_timeout": vt, "fanout_prefix": True, "fanout_patterns": True}
+except Exception:
+    pass
 
 app.autodiscover_tasks(['worker.jobs', 'worker', 'api.tasks'])
 

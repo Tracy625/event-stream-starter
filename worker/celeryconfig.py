@@ -6,6 +6,12 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 broker_url = REDIS_URL
 result_backend = REDIS_URL
 
+# Delivery/acks semantics to align with visibility_timeout and failure handling
+task_acks_late = True
+task_acks_on_failure_or_timeout = True
+worker_prefetch_multiplier = int(os.getenv("CELERY_WORKER_PREFETCH", "1"))
+worker_concurrency = int(os.getenv("CELERY_CONCURRENCY", "2"))
+
 # Single beat schedule definition
 beat_schedule = {
     'ping-every-minute': {
