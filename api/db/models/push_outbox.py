@@ -3,8 +3,17 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import (BigInteger, CheckConstraint, Column, DateTime, Index,
-                        Integer, String, Text, func)
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    Column,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 
 # 使用项目内的 Base（如果你的路径不同，这里改成你项目的 Base）

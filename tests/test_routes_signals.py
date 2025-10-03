@@ -250,8 +250,7 @@ def test_insufficient_verdict():
 
 def test_serialize_functions():
     """Test serialization helper functions."""
-    from api.routes.signals_summary import (serialize_datetime,
-                                            serialize_decimal)
+    from api.routes.signals_summary import serialize_datetime, serialize_decimal
 
     # Test datetime serialization
     dt_naive = datetime(2025, 9, 8, 12, 0, 0)

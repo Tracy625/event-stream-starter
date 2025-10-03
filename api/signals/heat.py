@@ -13,8 +13,10 @@ from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy import text as sa_text
 
-from api.core.metrics import (heat_persist_attempt_total,
-                              heat_persist_eventkey_notfound_total)
+from api.core.metrics import (
+    heat_persist_attempt_total,
+    heat_persist_eventkey_notfound_total,
+)
 from api.core.metrics_store import log_json, timeit
 
 # EMA state cache (in-memory for simplicity)

@@ -22,7 +22,12 @@ Example:
     #                 "status":"started","count":100}
 """
 
-from api.core.metrics_store import (get_request_id, get_trace_id, log_json,
-                                    set_trace_context, timeit)
+from api.core.metrics_store import (
+    get_request_id,
+    get_trace_id,
+    log_json,
+    set_trace_context,
+    timeit,
+)
 
 __all__ = ["log_json", "timeit", "get_trace_id", "get_request_id", "set_trace_context"]

@@ -1,5 +1,14 @@
-from sqlalchemy import (ARRAY, TIMESTAMP, BigInteger, Boolean, Column, Float,
-                        ForeignKey, Integer, Text)
+from sqlalchemy import (
+    ARRAY,
+    TIMESTAMP,
+    BigInteger,
+    Boolean,
+    Column,
+    Float,
+    ForeignKey,
+    Integer,
+    Text,
+)
 from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base

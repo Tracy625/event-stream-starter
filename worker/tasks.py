@@ -12,9 +12,9 @@ from .jobs.onchain.verify_signal import run_once as verify_signals_once
 from .jobs.outbox_dlq_recover import recover_once
 from .jobs.outbox_retry import scheduled_process
 from .jobs.secondary_proxy_scan import run_once as secondary_proxy_once
+
 # Ensure registration of non-tasks.py task modules
-from .jobs.topic_signal_scan import \
-    scan_topic_signals as _topic_scan_task  # noqa: F401
+from .jobs.topic_signal_scan import scan_topic_signals as _topic_scan_task  # noqa: F401
 from .jobs.x_kol_poll import run_once as kol_poll_once
 
 

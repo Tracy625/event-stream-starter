@@ -11,9 +11,19 @@ import api  # noqa: F401 ensure package init instrumentation runs
 from api import routes_expert_onchain
 from api.config.hotreload import get_registry
 from api.core.metrics_store import log_json, set_trace_context
+
 # Import all route modules at the top
-from api.routes import (cards, cards_send, dex, health, ingest_x, metrics,
-                        onchain, rules, security)
+from api.routes import (
+    cards,
+    cards_send,
+    dex,
+    health,
+    ingest_x,
+    metrics,
+    onchain,
+    rules,
+    security,
+)
 from api.routes import sentiment as sentiment_routes  # sentiment routes shim
 from api.routes import signals_heat, signals_summary, signals_topic, x_health
 

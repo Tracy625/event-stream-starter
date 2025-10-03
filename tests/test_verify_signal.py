@@ -16,9 +16,13 @@ os.environ["ONCHAIN_RULES"] = "on"
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
 
 from api.onchain.dto import Verdict
-from worker.jobs.onchain.verify_signal import (acquire_lock,
-                                               fetch_onchain_features, metrics,
-                                               process_candidate, run_once)
+from worker.jobs.onchain.verify_signal import (
+    acquire_lock,
+    fetch_onchain_features,
+    metrics,
+    process_candidate,
+    run_once,
+)
 
 
 class TestVerifySignal:

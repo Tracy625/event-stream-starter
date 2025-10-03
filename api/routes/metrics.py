@@ -18,10 +18,15 @@ from api.config.hotreload import get_registry
 from api.core import metrics as metrics_core
 from api.core.api_metrics import _REDIS_ZSET_KEY, _WINDOW_SECONDS
 from api.core.metrics import PROM_REGISTRY
-from api.core.metrics_exporter import (build_prom_text, clear_registry,
-                                       register_counter, register_gauge,
-                                       register_histogram,
-                                       update_from_hotreload_registry)
+from api.core.metrics_exporter import (
+    build_prom_text,
+    clear_registry,
+    register_counter,
+    register_gauge,
+    register_histogram,
+    update_from_hotreload_registry,
+)
+
 # Import from renamed module to avoid confusion
 from api.core.metrics_store import log_json
 from api.database import with_db

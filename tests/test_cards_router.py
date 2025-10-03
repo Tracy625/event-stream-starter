@@ -9,8 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from freezegun import freeze_time
 
-from api.cards.registry import (CARD_ROUTES, CARD_TEMPLATES,
-                                UnknownCardTypeError, normalize_card_type)
+from api.cards.registry import (
+    CARD_ROUTES,
+    CARD_TEMPLATES,
+    UnknownCardTypeError,
+    normalize_card_type,
+)
 from api.cards.render_pipeline import check_template_exists, render_and_push
 from api.cards.transformers import to_pushcard
 

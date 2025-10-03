@@ -8,6 +8,7 @@ if not os.getenv("SECURITY_BACKEND"):
     os.environ["SECURITY_BACKEND"] = "rules"
 
 from api.core.metrics_store import log_json
+
 # Import after setting environment
 from api.providers.goplus_provider import GoPlusProvider
 

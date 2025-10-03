@@ -12,15 +12,25 @@ from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 from jsonschema import Draft7Validator, ValidationError, validate
 
 from api.cards.dedup import mark_emitted, should_emit
-from api.cards.registry import (CARD_ROUTES, CARD_TEMPLATES, CardType,
-                                RenderPayload, UnknownCardTypeError,
-                                normalize_card_type)
+from api.cards.registry import (
+    CARD_ROUTES,
+    CARD_TEMPLATES,
+    CardType,
+    RenderPayload,
+    UnknownCardTypeError,
+    normalize_card_type,
+)
 from api.cards.transformers import to_pushcard
+
 # Import metrics from centralized registry - no new registrations here!
-from api.core.metrics import (cards_generated_total, cards_pipeline_latency_ms,
-                              cards_push_fail_total, cards_push_total,
-                              cards_render_fail_total,
-                              cards_unknown_type_count)
+from api.core.metrics import (
+    cards_generated_total,
+    cards_pipeline_latency_ms,
+    cards_push_fail_total,
+    cards_push_total,
+    cards_render_fail_total,
+    cards_unknown_type_count,
+)
 from api.services.telegram import TelegramNotifier
 from api.utils.logging import log_json
 

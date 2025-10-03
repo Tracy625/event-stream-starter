@@ -15,8 +15,16 @@ sys.path.insert(
     0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
 
-from api.core.idempotency import (cleanup_memory, clear_all, mark, mark_batch,
-                                  reset_stats, seen, seen_batch, stats)
+from api.core.idempotency import (
+    cleanup_memory,
+    clear_all,
+    mark,
+    mark_batch,
+    reset_stats,
+    seen,
+    seen_batch,
+    stats,
+)
 
 
 def test_basic_operations():

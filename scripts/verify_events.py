@@ -23,8 +23,7 @@ from sqlalchemy import create_engine, text
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api.events import (_build_evidence_item, make_event_key,
-                        merge_event_evidence)
+from api.events import _build_evidence_item, make_event_key, merge_event_evidence
 
 
 def load_replay_data(filepath: str) -> List[Dict[str, Any]]:

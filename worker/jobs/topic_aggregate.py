@@ -151,8 +151,10 @@ def aggregate_topics():
 
         # Push high-quality topics to Telegram (强耦合上线版)
         from api.cache import get_redis_client
-        from worker.jobs.push_topic_candidates import (format_topic_message,
-                                                       push_to_telegram)
+        from worker.jobs.push_topic_candidates import (
+            format_topic_message,
+            push_to_telegram,
+        )
 
         push_enabled = os.getenv("TOPIC_PUSH_ENABLED", "true").lower() == "true"
         min_mentions = int(os.getenv("TOPIC_PUSH_MIN_MENTIONS", "3"))

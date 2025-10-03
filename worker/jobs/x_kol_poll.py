@@ -16,6 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.cache import get_redis_client
+
 # Import from api modules (package imports already available in container PYTHONPATH)
 from api.clients.x_client import get_x_client, get_x_client_from_env
 from api.core.metrics_store import log_json
@@ -23,7 +24,6 @@ from api.models import Base, RawPost
 from api.normalize.x import normalize_tweet
 
 # from sqlalchemy.dialects.postgresql import insert  # not used
-
 
 
 def get_redis_client() -> Optional[redis.Redis]:

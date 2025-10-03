@@ -43,9 +43,11 @@ app.autodiscover_tasks(["worker.jobs", "worker", "api.tasks"])
 # 注册周期任务：每 20 秒跑一次 outbox 批处理
 from celery.schedules import schedule
 
-from api.core.metrics import (celery_queue_backlog,
-                              celery_queue_backlog_warn_total,
-                              container_restart_total)
+from api.core.metrics import (
+    celery_queue_backlog,
+    celery_queue_backlog_warn_total,
+    container_restart_total,
+)
 from worker.tasks import outbox_process_batch
 
 # Import tasks to ensure beat schedule is registered

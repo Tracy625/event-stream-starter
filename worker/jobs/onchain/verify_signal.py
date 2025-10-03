@@ -14,13 +14,16 @@ import redis
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import text as sa_text
 
-from api.core.metrics import (onchain_cooldown_hit_total,
-                              onchain_lock_acquire_total,
-                              onchain_lock_expired_seen_total,
-                              onchain_lock_hold_ms,
-                              onchain_lock_release_attempt_total,
-                              onchain_lock_release_total, onchain_process_ms,
-                              onchain_state_cas_conflict_total)
+from api.core.metrics import (
+    onchain_cooldown_hit_total,
+    onchain_lock_acquire_total,
+    onchain_lock_expired_seen_total,
+    onchain_lock_hold_ms,
+    onchain_lock_release_attempt_total,
+    onchain_lock_release_total,
+    onchain_process_ms,
+    onchain_state_cas_conflict_total,
+)
 from api.core.metrics_store import log_json
 from api.database import get_db
 from api.onchain.dto import OnchainFeature

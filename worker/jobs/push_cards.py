@@ -12,11 +12,13 @@ from celery.exceptions import MaxRetriesExceededError
 
 from api.cache import get_redis_client
 from api.cards.render_pipeline import render_and_push
+
 # Import metrics from centralized registry (no new registration here!)
 from api.core.metrics import cards_push_fail_total
 from api.database import with_db
 from api.db.models.push_outbox import OutboxStatus, PushOutbox
 from api.utils.logging import log_json
+
 # Use same app instance as other workers
 from worker.app import app
 

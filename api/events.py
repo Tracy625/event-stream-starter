@@ -19,11 +19,15 @@ from sqlalchemy import MetaData, Table, create_engine, func
 from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from api.core.metrics import (deadlock_retries_total,
-                              events_key_conflict_total, events_upsert_tx_ms,
-                              evidence_completion_rate, evidence_dedup_total,
-                              evidence_merge_ops_total,
-                              insert_conflict_fallback_total)
+from api.core.metrics import (
+    deadlock_retries_total,
+    events_key_conflict_total,
+    events_upsert_tx_ms,
+    evidence_completion_rate,
+    evidence_dedup_total,
+    evidence_merge_ops_total,
+    insert_conflict_fallback_total,
+)
 from api.core.metrics_store import log_json, timeit
 
 # Track if salt change warning has been shown
