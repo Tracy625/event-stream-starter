@@ -1,16 +1,16 @@
 # RUN_NOTES.md
 
-## P0-1: 统一与修复 /metrics 暴露
-
-### 执行日期
-2025-09-18
+## ！！！！非完整版本，AI 修改过。
 
 ### 变更摘要
+
 1. **api/core/metrics_exporter.py**：
+
    - 添加了 `hf_degrade_count` 和 `outbox_backlog` 的兜底保证（默认值 0）
    - 添加了 `export_text()` 作为 `build_prom_text()` 的兼容别名
 
 2. **api/routes/signals_summary.py**：
+
    - 移除了重复的 `/metrics` 路由（原本是处理路由冲突的代理）
 
 3. **api/main.py**：
@@ -20,6 +20,7 @@
 ### 自检与冒烟测试
 
 #### 404 场景（开关关闭）
+
 ```bash
 # 设置 METRICS_EXPOSED=false
 METRICS_EXPOSED=false docker compose -f infra/docker-compose.yml up -d api
@@ -29,6 +30,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/metrics
 ```
 
 #### 导出场景（开关开启）
+
 ```bash
 # 设置 METRICS_EXPOSED=true
 METRICS_EXPOSED=true docker compose -f infra/docker-compose.yml up -d api
@@ -48,12 +50,14 @@ curl -v http://localhost:8000/metrics 2>&1 | grep -i "content-type"
 ```
 
 #### 路由唯一性
+
 ```bash
 grep -RIn 'get("/metrics' api | wc -l
 # 结果：1（仅在 api/routes/metrics.py）
 ```
 
 ### 验收标准达成
+
 ✅ METRICS_EXPOSED=false 时返回 404
 ✅ METRICS_EXPOSED=true 时返回 Prometheus 文本格式
 ✅ Content-Type 正确：text/plain; version=0.0.4; charset=utf-8
@@ -61,12 +65,8 @@ grep -RIn 'get("/metrics' api | wc -l
 ✅ 仅有一个 /metrics 路由注册
 ✅ export_text() 兼容别名可用
 
-## Day22-1: 统一 SQLAlchemy Base 到 api/models/Base
-
-### 执行日期
-2025-09-18
-
 ### 静态检查结果
+
 ```bash
 # 检查重复的 declarative_base
 grep -RIn "declarative_base(" api/ worker/ | grep -v "api/models.py"
@@ -78,6 +78,7 @@ grep -RIn "from api.models import Base" api/db/models | wc -l  # 结果：1
 ```
 
 ### 迁移验证
+
 ```bash
 # Alembic 升级到最新
 docker compose -f infra/docker-compose.yml exec -T api alembic -c api/alembic.ini upgrade head
@@ -91,6 +92,7 @@ docker compose -f infra/docker-compose.yml exec -T api alembic -c api/alembic.in
 ```
 
 ### CRUD 冒烟测试
+
 ```bash
 docker compose -f infra/docker-compose.yml exec -T api python - <<'PY'
 import os
@@ -111,26 +113,28 @@ PY
 ```
 
 ### 健康检查
+
 ```bash
 curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/healthz
 # 结果：200
 ```
 
 ### 变更摘要
+
 1. **api/models.py**：添加了 `metadata` 导出和 `__all__` 列表
 2. **api/alembic/env.py**：更新 import，直接从 `api.models` 导入 `metadata`
 3. **api/db/models/push_outbox.py**：已正确使用统一的 Base（无需修改）
 
 ### 验收标准达成
+
 ✅ 全仓库仅有一个 Base 定义（api/models.py）
 ✅ `alembic upgrade head` 成功
 ✅ CRUD 冒烟测试通过（输出 "ok 1"）
 ✅ `/healthz` 返回 200
 ✅ RUN_NOTES.md 已更新
 
-## Day28: signals.type enforcement
-
 ### Verify type column and constraints
+
 ```bash
 # Check column, constraint, and index
 docker compose -f infra/docker-compose.yml exec -T db psql -U app -c "\d+ signals" | grep -E "type|idx_signals_type|signals_type_check"

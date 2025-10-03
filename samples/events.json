@@ -1,0 +1,339 @@
+[
+  {
+    "id": "evt_001",
+    "event_key": "eth:DEMO:2025-01-15T10:00:00Z",
+    "type": "token_listing",
+    "symbol": "DEMO",
+    "token_ca": "0xabcdef1234567890abcdef1234567890abcdef12",
+    "chain": "ethereum",
+    "claim": {
+      "actor": "demo_exchange",
+      "predicate": "LISTING_ANNOUNCEMENT",
+      "object": "TOKEN_DEMO",
+      "confidence": 0.85
+    },
+    "evidence": [
+      {
+        "type": "SOCIAL_POST",
+        "source": "twitter",
+        "author": "demo_kol_1",
+        "text": "Big news! $DEMO token listing confirmed on major exchange",
+        "timestamp": "2025-01-15T10:00:00Z"
+      },
+      {
+        "type": "DEX_DATA",
+        "source": "dexscreener",
+        "liquidity_usd": 125000,
+        "volume_24h": 45000,
+        "price_usd": 0.0234
+      }
+    ],
+    "sentiment_score": 0.75,
+    "risk_flags": [],
+    "created_at": "2025-01-15T10:05:00Z"
+  },
+  {
+    "id": "evt_002",
+    "event_key": "sol:MEME:2025-01-15T11:30:00Z",
+    "type": "token_launch",
+    "symbol": "MEME",
+    "token_ca": "SoL1Demo2Token3Address4567890ABCDEFGH",
+    "chain": "solana",
+    "claim": {
+      "actor": "pump_fun",
+      "predicate": "NEW_TOKEN_LAUNCH",
+      "object": "MEME_TOKEN",
+      "confidence": 0.92
+    },
+    "evidence": [
+      {
+        "type": "ONCHAIN_EVENT",
+        "source": "pump.fun",
+        "event": "token_created",
+        "creator": "SoL1Creator2Address3456789012345678",
+        "timestamp": "2025-01-15T11:30:00Z"
+      },
+      {
+        "type": "SOCIAL_POST",
+        "source": "twitter",
+        "author": "demo_kol_2",
+        "text": "New meme token just dropped on Solana! $MEME",
+        "timestamp": "2025-01-15T11:35:00Z"
+      }
+    ],
+    "sentiment_score": 0.68,
+    "risk_flags": ["unverified_contract"],
+    "created_at": "2025-01-15T11:40:00Z"
+  },
+  {
+    "id": "evt_003",
+    "event_key": "eth:SCAM:2025-01-15T14:20:00Z",
+    "type": "security_alert",
+    "symbol": "SCAM",
+    "token_ca": "0xdeadbeef0000000000000000000000000000dead",
+    "chain": "ethereum",
+    "claim": {
+      "actor": "security_scanner",
+      "predicate": "HIGH_RISK_DETECTED",
+      "object": "TOKEN_SCAM",
+      "confidence": 0.95
+    },
+    "evidence": [
+      {
+        "type": "SECURITY_SCAN",
+        "source": "goplus",
+        "risk_level": "red",
+        "issues": ["honeypot_detected", "high_sell_tax", "no_lp_lock"],
+        "buy_tax": 5,
+        "sell_tax": 99,
+        "lp_lock_days": 0
+      },
+      {
+        "type": "SOCIAL_POST",
+        "source": "twitter",
+        "author": "demo_kol_3",
+        "text": "WARNING: $SCAM token appears to be a honeypot! High sell tax detected.",
+        "timestamp": "2025-01-15T14:25:00Z"
+      }
+    ],
+    "sentiment_score": -0.82,
+    "risk_flags": ["honeypot", "high_tax", "no_liquidity_lock"],
+    "created_at": "2025-01-15T14:30:00Z"
+  },
+  {
+    "id": "evt_004",
+    "event_key": "eth:DEFI:2025-01-16T09:15:00Z",
+    "type": "protocol_update",
+    "symbol": "DEFI",
+    "token_ca": "0x1234567890abcdef1234567890abcdef12345678",
+    "chain": "ethereum",
+    "claim": {
+      "actor": "defi_protocol",
+      "predicate": "MAJOR_UPGRADE",
+      "object": "PROTOCOL_V2",
+      "confidence": 0.88
+    },
+    "evidence": [
+      {
+        "type": "SOCIAL_POST",
+        "source": "twitter",
+        "author": "demo_defi_analyst",
+        "text": "Major upgrade incoming for $DEFI protocol. V2 launches next week with cross-chain support.",
+        "timestamp": "2025-01-16T09:00:00Z"
+      },
+      {
+        "type": "DEX_DATA",
+        "source": "dexscreener",
+        "liquidity_usd": 2500000,
+        "volume_24h": 850000,
+        "price_usd": 1.45,
+        "price_change_24h": 15.3
+      }
+    ],
+    "sentiment_score": 0.81,
+    "risk_flags": [],
+    "created_at": "2025-01-16T09:20:00Z"
+  },
+  {
+    "id": "evt_005",
+    "event_key": "bsc:BSC:2025-01-16T12:00:00Z",
+    "type": "whale_activity",
+    "symbol": "BSC",
+    "token_ca": "0xbscbscbscbscbscbscbscbscbscbscbscbscbsc",
+    "chain": "bsc",
+    "claim": {
+      "actor": "whale_wallet",
+      "predicate": "LARGE_ACCUMULATION",
+      "object": "TOKEN_BSC",
+      "confidence": 0.78
+    },
+    "evidence": [
+      {
+        "type": "ONCHAIN_EVENT",
+        "source": "bscscan",
+        "event": "large_transfer",
+        "amount": 5000000,
+        "from": "0xwhale1234567890abcdef",
+        "to": "0xwhale_wallet_cold",
+        "timestamp": "2025-01-16T11:55:00Z"
+      },
+      {
+        "type": "DEX_DATA",
+        "source": "pancakeswap",
+        "liquidity_usd": 450000,
+        "volume_1h": 125000,
+        "price_usd": 0.0089
+      }
+    ],
+    "sentiment_score": 0.62,
+    "risk_flags": [],
+    "created_at": "2025-01-16T12:05:00Z"
+  },
+  {
+    "id": "evt_006",
+    "event_key": "eth:NFT:2025-01-16T15:45:00Z",
+    "type": "nft_collection",
+    "symbol": "NFT",
+    "token_ca": "0xnftnftnftnftnftnftnftnftnftnftnftnft",
+    "chain": "ethereum",
+    "claim": {
+      "actor": "nft_project",
+      "predicate": "COLLECTION_LAUNCH",
+      "object": "NFT_COLLECTION",
+      "confidence": 0.72
+    },
+    "evidence": [
+      {
+        "type": "SOCIAL_POST",
+        "source": "twitter",
+        "author": "demo_nft_influencer",
+        "text": "Exciting new NFT collection dropping tomorrow! Floor price already trending up.",
+        "timestamp": "2025-01-16T15:30:00Z"
+      }
+    ],
+    "sentiment_score": 0.55,
+    "risk_flags": ["low_evidence_count"],
+    "created_at": "2025-01-16T15:50:00Z"
+  },
+  {
+    "id": "evt_007",
+    "event_key": "arb:ARB:2025-01-17T08:30:00Z",
+    "type": "airdrop_announcement",
+    "symbol": "ARB",
+    "token_ca": "0xarbitrum1234567890abcdef1234567890abcdef",
+    "chain": "arbitrum",
+    "claim": {
+      "actor": "arbitrum_foundation",
+      "predicate": "AIRDROP_ANNOUNCEMENT",
+      "object": "TOKEN_DISTRIBUTION",
+      "confidence": 0.90
+    },
+    "evidence": [
+      {
+        "type": "SOCIAL_POST",
+        "source": "twitter",
+        "author": "demo_l2_analyst",
+        "text": "$ARB airdrop snapshot confirmed! Check eligibility on official site.",
+        "timestamp": "2025-01-17T08:15:00Z"
+      },
+      {
+        "type": "SECOND_SOURCE",
+        "source": "crypto_news_site",
+        "headline": "Major L2 Announces Retroactive Airdrop",
+        "timestamp": "2025-01-17T08:20:00Z"
+      }
+    ],
+    "sentiment_score": 0.88,
+    "risk_flags": [],
+    "created_at": "2025-01-17T08:35:00Z"
+  },
+  {
+    "id": "evt_008",
+    "event_key": "eth:STABLE:2025-01-17T10:00:00Z",
+    "type": "depeg_alert",
+    "symbol": "STABLE",
+    "token_ca": "0xstablecoin1234567890abcdef1234567890abc",
+    "chain": "ethereum",
+    "claim": {
+      "actor": "price_monitor",
+      "predicate": "PRICE_DEVIATION",
+      "object": "STABLECOIN_DEPEG",
+      "confidence": 0.94
+    },
+    "evidence": [
+      {
+        "type": "DEX_DATA",
+        "source": "dexscreener",
+        "price_usd": 0.92,
+        "expected_price": 1.00,
+        "deviation_pct": -8.0,
+        "volume_spike": true
+      },
+      {
+        "type": "SOCIAL_POST",
+        "source": "twitter",
+        "author": "demo_defi_analyst",
+        "text": "ALERT: $STABLE showing signs of depeg. Trading at $0.92. Monitor closely.",
+        "timestamp": "2025-01-17T09:55:00Z"
+      }
+    ],
+    "sentiment_score": -0.65,
+    "risk_flags": ["depeg_warning", "high_volatility"],
+    "created_at": "2025-01-17T10:05:00Z"
+  },
+  {
+    "id": "evt_009",
+    "event_key": "sol:HYPE:2025-01-17T13:20:00Z",
+    "type": "trending_topic",
+    "symbol": "HYPE",
+    "token_ca": "HyPe1Token2Demo3Address456789012345678",
+    "chain": "solana",
+    "claim": {
+      "actor": "social_aggregator",
+      "predicate": "TRENDING_MENTION",
+      "object": "TOKEN_HYPE",
+      "confidence": 0.76
+    },
+    "evidence": [
+      {
+        "type": "SOCIAL_TREND",
+        "source": "twitter",
+        "mention_count_10m": 45,
+        "mention_count_1h": 230,
+        "slope": 2.3,
+        "unique_authors": 67
+      },
+      {
+        "type": "DEX_DATA",
+        "source": "raydium",
+        "liquidity_usd": 75000,
+        "volume_1h": 32000,
+        "price_usd": 0.0012,
+        "price_change_1h": 28.5
+      }
+    ],
+    "sentiment_score": 0.71,
+    "risk_flags": ["rapid_price_movement"],
+    "created_at": "2025-01-17T13:25:00Z"
+  },
+  {
+    "id": "evt_010",
+    "event_key": "eth:BLUE:2025-01-17T16:00:00Z",
+    "type": "partnership_announcement",
+    "symbol": "BLUE",
+    "token_ca": "0xbluechip1234567890abcdef1234567890abcdef",
+    "chain": "ethereum",
+    "claim": {
+      "actor": "project_team",
+      "predicate": "PARTNERSHIP_ANNOUNCED",
+      "object": "STRATEGIC_COLLABORATION",
+      "confidence": 0.84
+    },
+    "evidence": [
+      {
+        "type": "SOCIAL_POST",
+        "source": "twitter",
+        "author": "demo_blockchain_news",
+        "text": "$BLUE announces strategic partnership with major tech company. Details in official blog post.",
+        "timestamp": "2025-01-17T15:45:00Z"
+      },
+      {
+        "type": "SECOND_SOURCE",
+        "source": "official_blog",
+        "headline": "Partnership Announcement: Building the Future Together",
+        "timestamp": "2025-01-17T15:50:00Z"
+      },
+      {
+        "type": "DEX_DATA",
+        "source": "uniswap",
+        "liquidity_usd": 1800000,
+        "volume_24h": 650000,
+        "price_usd": 2.34,
+        "price_change_1h": 8.7
+      }
+    ],
+    "sentiment_score": 0.79,
+    "risk_flags": [],
+    "created_at": "2025-01-17T16:05:00Z"
+  }
+]
