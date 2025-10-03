@@ -25,7 +25,12 @@ from api.routes import (
     security,
 )
 from api.routes import sentiment as sentiment_routes  # sentiment routes shim
-from api.routes import signals_heat, signals_summary, signals_topic, x_health
+from api.routes import (
+    signals_heat,
+    signals_summary,
+    signals_topic,
+    x_health,
+)
 
 # HTTP metrics
 try:

@@ -1,0 +1,20 @@
+[tool.black]
+line-length = 88
+target-version = ['py311']
+exclude = '''
+/(
+    \.venv
+  | \.git
+  | \.pytest_cache
+  | __pycache__
+  | node_modules
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip_gitignore = true
+known_first_party = ["api", "worker", "schemas", "scripts", "templates", "tests"]
