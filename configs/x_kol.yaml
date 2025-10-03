@@ -2,51 +2,26 @@
 # Priority: this file is used first; if empty or missing, code falls back to .env X_KOL_HANDLES
 # handle values are Twitter screen names without '@'
 
+# STUB: Replace with your own list of Twitter accounts to monitor
+# Examples below show the expected format - add real accounts for production use
+
 kol:
-  - handle: elonmusk
-  - handle: cryptocom
-  - handle: cz_binance
-  - handle: pumpdotfun
-  - handle: okx
-  - handle: HuobiGlobal
-  - handle: binance
-  - handle: FLOKI
-  - handle: realDonaldTrump
-  - handle: Gate
-  - handle: dogecoin
-  - handle: BNBCHAIN
-  - handle: JinseFinance
-  - handle: a16z
-  - handle: cointelegraph
-  - handle: Shibtoken
-  - handle: BabyDogeCoin
-  - handle: justinsuntron
-  - handle: coinbase
-  - handle: Bitcoin
-  - handle: trondao
-  - handle: crypto_birb
-  - handle: kaitrump
-  - handle: BlueMove_OA
-  - handle: heyibinance
-  - handle: horizenglobal
-  - handle: grok
-  - handle: HyperliquidX
-  - handle: liangxihuigui
-  - handle: sunyuchentron
-  - handle: EricTrump
-  - handle: DonaldJTrumpJr
-  - handle: worldlibertyfi
-  - handle: GetTrumpMemes
-  - handle: LaraLeaTrump
-  - handle: bwenews
-  - handle: TrumpWarRoom
-  - handle: tedcruz
-  - handle: USDai_Official
-  - handle: ethereum
-  - handle: VitalikButerin
-  - handle: solana
-  - handle: star_okx
-  - handle: FoxNews
-  - handle: quant_network
-  - handle: gverdian
-  - handle: coinglass_com
+  # Example: Crypto influencers
+  - handle: example_crypto_kol_1
+  - handle: example_crypto_analyst
+
+  # Example: Exchange official accounts
+  - handle: example_exchange_official
+  - handle: example_trading_platform
+
+  # Example: Project founders & teams
+  - handle: example_project_founder
+  - handle: example_defi_protocol
+
+  # Example: News & media
+  - handle: example_crypto_news
+  - handle: example_blockchain_media
+
+  # Example: Researchers & VCs
+  - handle: example_venture_capital
+  - handle: example_crypto_researcher
