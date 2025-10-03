@@ -1,0 +1,36 @@
+# Worker dependencies - shares most dependencies with API
+# Install with: pip install -r requirements.txt
+
+# Task Queue
+celery>=5.4,<5.5
+redis>=5.0,<6
+
+# Database
+psycopg2-binary>=2.9,<3
+SQLAlchemy>=2.0,<2.1
+
+# Configuration
+python-dotenv>=1.0,<2
+structlog>=24.1,<25
+PyYAML>=6.0,<7
+
+# HTTP Client for external APIs
+httpx>=0.27.0,<0.28
+requests>=2.31.0,<3
+
+# NLP & ML (for analysis tasks)
+transformers>=4.41,<5
+huggingface-hub>=0.23,<1
+
+# LLM Integration
+openai>=1.101.0,<2
+
+# BigQuery Export
+google-cloud-bigquery>=3.25.0
+
+# Utilities
+python-dateutil>=2.9.0
+jsonschema>=4.0.0
+
+# Metrics
+prometheus-client>=0.20.0,<0.21

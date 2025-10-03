@@ -113,17 +113,17 @@ jobs:
 
     - name: Build API image
       run: |
-        docker build -t event-stream-starter/api:test -f infra/Dockerfile.api .
+        docker build -t event-stream-starter/api:test -f api/Dockerfile .
       continue-on-error: true  # Allow failure if Dockerfile doesn't exist yet
 
     - name: Build Worker image
       run: |
-        docker build -t event-stream-starter/worker:test -f infra/Dockerfile.worker .
+        docker build -t event-stream-starter/worker:test -f worker/Dockerfile .
       continue-on-error: true  # Allow failure if Dockerfile doesn't exist yet
 
     - name: Test docker-compose
       run: |
-        docker-compose -f infra/docker-compose.yml config
+        docker compose -f infra/docker-compose.yml config
 
   security:
     name: Security Scan
