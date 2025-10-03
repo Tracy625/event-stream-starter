@@ -1,9 +1,12 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Literal
 from datetime import datetime
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, Field
+
 
 class TopicSignalResponse(BaseModel):
     """Fixed output schema for topic signals"""
+
     type: Literal["topic"] = "topic"
     topic_id: str = Field(description="Topic identifier, format: t.{hash12}")
     topic_entities: List[str] = Field(description="Main entities for this topic")
@@ -19,8 +22,10 @@ class TopicSignalResponse(BaseModel):
     degrade: bool = Field(description="Whether fallback was used")
     topic_merge_mode: str = Field(description="Merge mode: normal or fallback")
 
+
 class TopicMergeConfig(BaseModel):
     """Topic merging configuration"""
+
     sim_threshold: float = Field(default=0.80)
     jaccard_fallback: float = Field(default=0.50)
     whitelist_boost: float = Field(default=0.05)

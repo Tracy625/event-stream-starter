@@ -2,8 +2,10 @@
 
 import os
 from typing import Any, Dict
+
 from fastapi import APIRouter, Query
-from api.clients.x_client import get_x_health, get_x_client_from_env
+
+from api.clients.x_client import get_x_client_from_env, get_x_health
 from api.core.metrics_store import log_json
 
 router = APIRouter()

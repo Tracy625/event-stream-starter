@@ -15,10 +15,11 @@ Exit codes:
 """
 
 import os
-import sys
 import re
+import sys
 from pathlib import Path
-from typing import Dict, List, Set, Tuple, Any
+from typing import Any, Dict, List, Set, Tuple
+
 import yaml
 
 
@@ -32,20 +33,26 @@ class ConfigLinter:
 
         # Sensitive keywords that should not be hardcoded
         self.sensitive_patterns = [
-            'TOKEN', 'SECRET', 'KEY', 'PASSWORD',
-            'WEBHOOK', 'PRIVATE', 'ACCESS', 'API_KEY'
+            "TOKEN",
+            "SECRET",
+            "KEY",
+            "PASSWORD",
+            "WEBHOOK",
+            "PRIVATE",
+            "ACCESS",
+            "API_KEY",
         ]
 
         # Known safe placeholders
         self.safe_placeholders = [
-            '__FILL_ME__',
-            'your_.*_here',
-            'sk-xxxxxxx',
-            '0x[0]+',
-            'changeme',
-            'placeholder',
-            'example',
-            'default'
+            "__FILL_ME__",
+            "your_.*_here",
+            "sk-xxxxxxx",
+            "0x[0]+",
+            "changeme",
+            "placeholder",
+            "example",
+            "default",
         ]
 
         # Required environment variables (from .env.example)
@@ -53,55 +60,51 @@ class ConfigLinter:
 
         # YAML schema definitions
         self.yaml_schemas = {
-            'risk_rules.yml': {
-                'required': ['goplus_version'],
-                'optional': [
-                    'RISK_TAX_RED', 'RISK_LP_YELLOW_DAYS',
-                    'HONEYPOT_RED', 'RISK_MIN_CONFIDENCE',
-                    'max_risk_score', 'min_risk_score', 'default_risk'
+            "risk_rules.yml": {
+                "required": ["goplus_version"],
+                "optional": [
+                    "RISK_TAX_RED",
+                    "RISK_LP_YELLOW_DAYS",
+                    "HONEYPOT_RED",
+                    "RISK_MIN_CONFIDENCE",
+                    "max_risk_score",
+                    "min_risk_score",
+                    "default_risk",
                 ],
-                'types': {
-                    'RISK_TAX_RED': (int, float),
-                    'RISK_LP_YELLOW_DAYS': (int, float),
-                    'HONEYPOT_RED': bool,
-                    'RISK_MIN_CONFIDENCE': (int, float),
-                    'max_risk_score': (int, float),
-                    'min_risk_score': (int, float)
+                "types": {
+                    "RISK_TAX_RED": (int, float),
+                    "RISK_LP_YELLOW_DAYS": (int, float),
+                    "HONEYPOT_RED": bool,
+                    "RISK_MIN_CONFIDENCE": (int, float),
+                    "max_risk_score": (int, float),
+                    "min_risk_score": (int, float),
                 },
-                'ranges': {
-                    'RISK_TAX_RED': (0, 100),
-                    'RISK_LP_YELLOW_DAYS': (0, 365),
-                    'RISK_MIN_CONFIDENCE': (0, 1),
-                    'max_risk_score': (0, 1000),
-                    'min_risk_score': (0, 1000)
-                }
-            },
-            'onchain.yml': {
-                'required': ['windows', 'thresholds', 'verdict'],
-                'types': {
-                    'windows': list,
-                    'thresholds': dict,
-                    'verdict': dict
-                }
-            },
-            'rules.yml': {
-                'required': ['groups', 'scoring', 'missing_map'],
-                'types': {
-                    'groups': list,  # Changed from dict to list
-                    'scoring': dict,
-                    'missing_map': dict
-                }
-            },
-            'topic_merge.yml': {
-                'required': [],  # No strict requirements
-                'optional': ['merge_rules', 'similarity_threshold'],
-                'types': {
-                    'similarity_threshold': (int, float)
+                "ranges": {
+                    "RISK_TAX_RED": (0, 100),
+                    "RISK_LP_YELLOW_DAYS": (0, 365),
+                    "RISK_MIN_CONFIDENCE": (0, 1),
+                    "max_risk_score": (0, 1000),
+                    "min_risk_score": (0, 1000),
                 },
-                'ranges': {
-                    'similarity_threshold': (0, 1)
-                }
-            }
+            },
+            "onchain.yml": {
+                "required": ["windows", "thresholds", "verdict"],
+                "types": {"windows": list, "thresholds": dict, "verdict": dict},
+            },
+            "rules.yml": {
+                "required": ["groups", "scoring", "missing_map"],
+                "types": {
+                    "groups": list,  # Changed from dict to list
+                    "scoring": dict,
+                    "missing_map": dict,
+                },
+            },
+            "topic_merge.yml": {
+                "required": [],  # No strict requirements
+                "optional": ["merge_rules", "similarity_threshold"],
+                "types": {"similarity_threshold": (int, float)},
+                "ranges": {"similarity_threshold": (0, 1)},
+            },
         }
 
     def lint_all(self) -> bool:
@@ -125,13 +128,13 @@ class ConfigLinter:
 
     def _check_yaml_files(self):
         """Validate all YAML files in rules/ directory."""
-        rules_dir = self.project_root / 'rules'
+        rules_dir = self.project_root / "rules"
 
         if not rules_dir.exists():
             self.errors.append(f"Rules directory not found: {rules_dir}")
             return
 
-        yaml_files = list(rules_dir.glob('*.yml'))
+        yaml_files = list(rules_dir.glob("*.yml"))
 
         if not yaml_files:
             self.warnings.append(f"No YAML files found in {rules_dir}")
@@ -139,7 +142,7 @@ class ConfigLinter:
 
         for yaml_file in yaml_files:
             # Skip temporary and example files
-            if yaml_file.name.endswith('.tmp') or '.example.' in yaml_file.name:
+            if yaml_file.name.endswith(".tmp") or ".example." in yaml_file.name:
                 continue
 
             self._validate_yaml_file(yaml_file)
@@ -153,7 +156,7 @@ class ConfigLinter:
                 return
 
             # Parse YAML
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
                 data = yaml.safe_load(content)
 
@@ -183,12 +186,12 @@ class ConfigLinter:
             return
 
         # Check required fields
-        for field in schema.get('required', []):
+        for field in schema.get("required", []):
             if field not in data:
                 self.errors.append(f"{filename}: Missing required field '{field}'")
 
         # Check field types
-        types = schema.get('types', {})
+        types = schema.get("types", {})
         for field, expected_type in types.items():
             if field in data:
                 value = data[field]
@@ -199,7 +202,7 @@ class ConfigLinter:
                     )
 
         # Check value ranges
-        ranges = schema.get('ranges', {})
+        ranges = schema.get("ranges", {})
         for field, (min_val, max_val) in ranges.items():
             if field in data:
                 value = data[field]
@@ -212,11 +215,11 @@ class ConfigLinter:
 
     def _check_yaml_common_issues(self, filename: str, content: str):
         """Check for common YAML issues."""
-        lines = content.split('\n')
+        lines = content.split("\n")
 
         for i, line in enumerate(lines, 1):
             # Check for tabs (YAML should use spaces)
-            if '\t' in line:
+            if "\t" in line:
                 self.warnings.append(f"{filename}:{i}: Contains tabs (use spaces)")
 
             # Check for trailing whitespace
@@ -225,8 +228,8 @@ class ConfigLinter:
 
     def _check_env_vars(self):
         """Check environment variable consistency."""
-        env_file = self.project_root / '.env'
-        env_example = self.project_root / '.env.example'
+        env_file = self.project_root / ".env"
+        env_example = self.project_root / ".env.example"
 
         if not env_example.exists():
             self.errors.append(".env.example not found")
@@ -244,7 +247,7 @@ class ConfigLinter:
             missing = self.required_env_vars - set(actual_vars.keys())
             for var in sorted(missing):
                 # Skip if it's a placeholder value in .env.example
-                if example_vars.get(var, '').startswith('__FILL_ME__'):
+                if example_vars.get(var, "").startswith("__FILL_ME__"):
                     self.warnings.append(f"Missing optional env var: {var}")
                 else:
                     self.errors.append(f"Missing required env var: {var}")
@@ -261,17 +264,17 @@ class ConfigLinter:
         env_vars = {}
 
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
 
                     # Skip comments and empty lines
-                    if not line or line.startswith('#'):
+                    if not line or line.startswith("#"):
                         continue
 
                     # Parse KEY=VALUE
-                    if '=' in line:
-                        key, value = line.split('=', 1)
+                    if "=" in line:
+                        key, value = line.split("=", 1)
                         key = key.strip()
                         value = value.strip()
 
@@ -283,7 +286,9 @@ class ConfigLinter:
 
                         env_vars[key] = value
                     else:
-                        self.warnings.append(f"{filepath.name}:{line_num}: Invalid line format")
+                        self.warnings.append(
+                            f"{filepath.name}:{line_num}: Invalid line format"
+                        )
 
         except Exception as e:
             self.errors.append(f"Error parsing {filepath.name}: {str(e)}")
@@ -293,21 +298,21 @@ class ConfigLinter:
     def _check_sensitive_info(self):
         """Scan for hardcoded sensitive information."""
         # Check .env.example for hardcoded secrets
-        self._scan_file_for_secrets(self.project_root / '.env.example')
+        self._scan_file_for_secrets(self.project_root / ".env.example")
 
         # Check YAML files
-        rules_dir = self.project_root / 'rules'
+        rules_dir = self.project_root / "rules"
         if rules_dir.exists():
-            for yaml_file in rules_dir.glob('*.yml'):
-                if not yaml_file.name.endswith('.tmp'):
+            for yaml_file in rules_dir.glob("*.yml"):
+                if not yaml_file.name.endswith(".tmp"):
                     self._scan_file_for_secrets(yaml_file)
 
         # Check Python files in api/ for hardcoded secrets
-        api_dir = self.project_root / 'api'
+        api_dir = self.project_root / "api"
         if api_dir.exists():
-            for py_file in api_dir.rglob('*.py'):
+            for py_file in api_dir.rglob("*.py"):
                 # Skip test files and __pycache__
-                if 'test' in py_file.name or '__pycache__' in str(py_file):
+                if "test" in py_file.name or "__pycache__" in str(py_file):
                     continue
                 self._scan_file_for_secrets(py_file)
 
@@ -317,9 +322,9 @@ class ConfigLinter:
             return
 
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
-                lines = content.split('\n')
+                lines = content.split("\n")
 
             for line_num, line in enumerate(lines, 1):
                 # Check each sensitive pattern
@@ -341,20 +346,31 @@ class ConfigLinter:
         line_lower = line.lower()
 
         # Check if it's a comment or documentation
-        if line.strip().startswith('#') or line.strip().startswith('//'):
+        if line.strip().startswith("#") or line.strip().startswith("//"):
             return False
 
         # Skip common false positives in code
         false_positives = [
-            'event_key', 'token_ca', 'api_key', 'secret_key',
-            'private_key', 'access_token', 'webhook_url',
-            'password_hash', 'session_key', 'cache_key',
-            'primary_key', 'foreign_key', 'sort_key',
-            'partition_key', 'index_key', 'hash_key'
+            "event_key",
+            "token_ca",
+            "api_key",
+            "secret_key",
+            "private_key",
+            "access_token",
+            "webhook_url",
+            "password_hash",
+            "session_key",
+            "cache_key",
+            "primary_key",
+            "foreign_key",
+            "sort_key",
+            "partition_key",
+            "index_key",
+            "hash_key",
         ]
 
         for fp in false_positives:
-            if fp in line_lower and not '=' in line:
+            if fp in line_lower and not "=" in line:
                 return False
 
         # Check for safe placeholders
@@ -363,8 +379,12 @@ class ConfigLinter:
                 return False
 
         # Check for actual value assignment (for config files)
-        if '=' in line and not line.strip().startswith('if ') and not line.strip().startswith('assert '):
-            parts = line.split('=', 1)
+        if (
+            "=" in line
+            and not line.strip().startswith("if ")
+            and not line.strip().startswith("assert ")
+        ):
+            parts = line.split("=", 1)
             if len(parts) == 2:
                 key, value = parts
                 key = key.strip()
@@ -381,15 +401,18 @@ class ConfigLinter:
                     return False
 
                 # Check if value looks like a real secret
-                if value and not value.startswith('__') and not value.endswith('__'):
+                if value and not value.startswith("__") and not value.endswith("__"):
                     # Check for patterns that look like real secrets
-                    if any([
-                        value.startswith('sk-') and len(value) > 20,  # OpenAI style
-                        value.startswith('pk_') and len(value) > 20,  # Stripe style
-                        value.startswith('Bearer ') and len(value) > 20,
-                        re.match(r'^[a-fA-F0-9]{40,}$', value),  # Long hex string
-                        'hardcode' in value.lower() and len(value) > 10,  # Obvious hardcode
-                    ]):
+                    if any(
+                        [
+                            value.startswith("sk-") and len(value) > 20,  # OpenAI style
+                            value.startswith("pk_") and len(value) > 20,  # Stripe style
+                            value.startswith("Bearer ") and len(value) > 20,
+                            re.match(r"^[a-fA-F0-9]{40,}$", value),  # Long hex string
+                            "hardcode" in value.lower()
+                            and len(value) > 10,  # Obvious hardcode
+                        ]
+                    ):
                         return True
 
         return False

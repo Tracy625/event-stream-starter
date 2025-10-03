@@ -4,8 +4,9 @@ Signals API routes.
 
 import os
 from datetime import datetime, timezone
-from fastapi import APIRouter, Query, HTTPException, Depends
 from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 try:
@@ -13,9 +14,9 @@ try:
 except Exception:
     from api.db import get_db
 
-from api.signals.heat import normalize_token, normalize_token_ca, compute_heat, persist_heat
 from api.core.metrics_store import log_json
-
+from api.signals.heat import (compute_heat, normalize_token,
+                              normalize_token_ca, persist_heat)
 
 router = APIRouter(prefix="/signals", tags=["signals"])
 
@@ -28,52 +29,57 @@ async def get_heat(
 ):
     """
     Get heat metrics for a token.
-    
+
     Priority: token_ca > token
     Returns heat metrics including counts, slope, and trend.
     """
     # Validate parameters - exactly one required
     if not token and not token_ca:
         raise HTTPException(
-            status_code=400, 
-            detail={"degrade": True, "error": "Either token or token_ca required"}
+            status_code=400,
+            detail={"degrade": True, "error": "Either token or token_ca required"},
         )
-    
+
     if token and token_ca:
         raise HTTPException(
             status_code=400,
-            detail={"degrade": True, "error": "Provide either token or token_ca, not both"}
+            detail={
+                "degrade": True,
+                "error": "Provide either token or token_ca, not both",
+            },
         )
-    
+
     # Normalize inputs
     normalized_token = None
     normalized_ca = None
-    
+
     try:
         if token:
             normalized_token = normalize_token(token)
             if not normalized_token:
                 raise HTTPException(
                     status_code=400,
-                    detail={"degrade": True, "error": "Invalid token symbol"}
+                    detail={"degrade": True, "error": "Invalid token symbol"},
                 )
-        
+
         if token_ca:
             normalized_ca = normalize_token_ca(token_ca)
             if not normalized_ca:
                 raise HTTPException(
                     status_code=400,
-                    detail={"degrade": True, "error": "Invalid token contract address"}
+                    detail={"degrade": True, "error": "Invalid token contract address"},
                 )
     except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail={"degrade": True, "error": str(e)}
-        )
-    
+        raise HTTPException(status_code=400, detail={"degrade": True, "error": str(e)})
+
     try:
         # Decide persistence upfront
-        enable_persist = os.getenv("HEAT_ENABLE_PERSIST", "false").lower() in ("true", "1", "yes", "on")
+        enable_persist = os.getenv("HEAT_ENABLE_PERSIST", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+            "on",
+        )
         persisted = False
 
         # Compute and (optionally) persist within a single transaction
@@ -101,7 +107,7 @@ async def get_heat(
             "degrade": heat["degrade"],
             "persisted": persisted,
             "asof_ts": heat.get("asof_ts"),
-            "from_cache": heat.get("from_cache", False)
+            "from_cache": heat.get("from_cache", False),
         }
 
         # Add EMA fields if present
@@ -110,16 +116,13 @@ async def get_heat(
             response["trend_ema"] = heat["trend_ema"]
 
         return response
-        
+
     except Exception as e:
         # Return degraded response on error
         log_json(
-            stage="signals.heat.error",
-            error=str(e),
-            token=token,
-            token_ca=token_ca
+            stage="signals.heat.error", error=str(e), token=token, token_ca=token_ca
         )
-        
+
         return {
             "token": normalized_token,
             "token_ca": normalized_ca,
@@ -131,5 +134,5 @@ async def get_heat(
             "degrade": True,
             "persisted": False,
             "asof_ts": datetime.now(timezone.utc).isoformat(),
-            "from_cache": False
+            "from_cache": False,
         }

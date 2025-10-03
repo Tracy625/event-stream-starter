@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
+import json
 import sys
 import urllib.request
-import json
 
 url = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/healthz"
 

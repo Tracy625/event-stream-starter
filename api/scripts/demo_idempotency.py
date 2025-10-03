@@ -6,18 +6,18 @@ Usage:
     python api/scripts/demo_idempotency.py
 """
 
-import sys
-import os
-import time
 import json
+import os
+import sys
+import time
 from datetime import datetime
 
 # Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from api.core.idempotency import (
-    seen, mark, seen_batch, mark_batch, stats
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
+
+from api.core.idempotency import mark, mark_batch, seen, seen_batch, stats
 
 
 def demo_tweet_deduplication():
@@ -40,7 +40,9 @@ def demo_tweet_deduplication():
 
         if seen(tweet_key):
             duplicate_count += 1
-            print(f"  ⚠️  Duplicate tweet skipped: {tweet['id']} from @{tweet['author']}")
+            print(
+                f"  ⚠️  Duplicate tweet skipped: {tweet['id']} from @{tweet['author']}"
+            )
         else:
             # Process the tweet
             print(f"  ✓ Processing tweet: {tweet['id']} from @{tweet['author']}")
@@ -50,7 +52,9 @@ def demo_tweet_deduplication():
             mark(tweet_key, ttl_seconds=14 * 24 * 3600)  # 14 days TTL
             processed_count += 1
 
-    print(f"\nSummary: {processed_count} processed, {duplicate_count} duplicates skipped")
+    print(
+        f"\nSummary: {processed_count} processed, {duplicate_count} duplicates skipped"
+    )
 
 
 def demo_webhook_idempotency():
@@ -75,14 +79,24 @@ def demo_webhook_idempotency():
         # Mark as processed
         mark(f"webhook:{webhook_id}", ttl_seconds=7 * 24 * 3600)  # 7 days TTL
 
-        return {"status": "success", "webhook_id": webhook_id, "processed_at": datetime.now().isoformat()}
+        return {
+            "status": "success",
+            "webhook_id": webhook_id,
+            "processed_at": datetime.now().isoformat(),
+        }
 
     # Simulate webhook calls (including retries)
     webhooks = [
         {"id": "wh_001", "payload": {"event": "payment.success", "amount": 100}},
         {"id": "wh_002", "payload": {"event": "user.signup", "user_id": "u123"}},
-        {"id": "wh_001", "payload": {"event": "payment.success", "amount": 100}},  # Retry
-        {"id": "wh_003", "payload": {"event": "token.transfer", "from": "0x123", "to": "0x456"}},
+        {
+            "id": "wh_001",
+            "payload": {"event": "payment.success", "amount": 100},
+        },  # Retry
+        {
+            "id": "wh_003",
+            "payload": {"event": "token.transfer", "from": "0x123", "to": "0x456"},
+        },
     ]
 
     for webhook in webhooks:
@@ -96,9 +110,16 @@ def demo_batch_event_processing():
 
     # Simulate batch of events
     events = [
-        "event_001", "event_002", "event_003", "event_004", "event_005",
-        "event_002", "event_003",  # Duplicates
-        "event_006", "event_007", "event_008"
+        "event_001",
+        "event_002",
+        "event_003",
+        "event_004",
+        "event_005",
+        "event_002",
+        "event_003",  # Duplicates
+        "event_006",
+        "event_007",
+        "event_008",
     ]
 
     print(f"  Received {len(events)} events")
@@ -108,7 +129,9 @@ def demo_batch_event_processing():
     seen_results = seen_batch(event_keys)
 
     new_events = [evt for evt, key in zip(events, event_keys) if not seen_results[key]]
-    duplicate_events = [evt for evt, key in zip(events, event_keys) if seen_results[key]]
+    duplicate_events = [
+        evt for evt, key in zip(events, event_keys) if seen_results[key]
+    ]
 
     print(f"  📊 New events: {len(new_events)}")
     print(f"  📊 Duplicate events: {len(duplicate_events)}")
@@ -142,7 +165,9 @@ def demo_card_send_deduplication():
         idemp_key = f"card:{event_key}:{channel_id}:{template}"
 
         if seen(idemp_key):
-            print(f"  ⚠️  Card already sent for event '{event_key}' to channel {channel_id}")
+            print(
+                f"  ⚠️  Card already sent for event '{event_key}' to channel {channel_id}"
+            )
             return {"dedup": True, "sent": 0}
 
         # Send the card
@@ -184,7 +209,7 @@ def show_statistics():
     print(f"     - Marks: {final_stats['marks']}")
     print(f"  📊 Hit rate: {final_stats['hit_rate']:.1f}%")
 
-    if final_stats['backend'] == 'redis':
+    if final_stats["backend"] == "redis":
         print(f"  📊 Redis available: {final_stats.get('redis_available', False)}")
     else:
         print(f"  📊 Memory keys: {final_stats.get('memory_keys', 0)}")

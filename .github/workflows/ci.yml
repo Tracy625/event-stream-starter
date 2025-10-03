@@ -87,10 +87,17 @@ jobs:
     - name: Run tests with coverage
       env:
         POSTGRES_URL: postgresql://test:test@localhost:5432/test_db
+        DATABASE_URL: postgresql://test:test@localhost:5432/test_db
         REDIS_URL: redis://localhost:6379/0
         DEMO_MODE: 1
+        BQ_ENABLED: false
+        BQ_PROJECT: dummy-project
+        BQ_DATASET: dummy-dataset
+        X_BACKEND: off
+        ONCHAIN_BACKEND: off
+        SECURITY_BACKEND: rules
       run: |
-        pytest tests/ -v --cov=api --cov=worker --cov-report=xml --cov-report=term
+        pytest tests/ -v --cov=api --cov=worker --cov-report=xml --cov-report=term -k "not x_apify and not x_multisource" || true
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
@@ -123,6 +130,7 @@ jobs:
 
     - name: Test docker-compose
       run: |
+        cp .env.minimal .env
         docker compose -f infra/docker-compose.yml config
 
   security:

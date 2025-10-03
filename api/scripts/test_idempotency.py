@@ -6,17 +6,17 @@ Usage:
     python api/scripts/test_idempotency.py
 """
 
-import sys
 import os
+import sys
 import time
 
 # Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from api.core.idempotency import (
-    seen, mark, seen_batch, mark_batch,
-    cleanup_memory, stats, clear_all, reset_stats
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
+
+from api.core.idempotency import (cleanup_memory, clear_all, mark, mark_batch,
+                                  reset_stats, seen, seen_batch, stats)
 
 
 def test_basic_operations():
@@ -82,6 +82,7 @@ def test_memory_cleanup():
 
     # This only works in memory mode
     import api.core.idempotency as idem_module
+
     if idem_module._redis:
         print("⚠ Skipping memory cleanup test (Redis is available)")
         return True
@@ -92,6 +93,7 @@ def test_memory_cleanup():
 
     # Set a smaller max size for testing
     import api.core.idempotency as idem_module
+
     old_max_size = idem_module._MEMORY_MAX_SIZE
     idem_module._MEMORY_MAX_SIZE = 100  # Small size for testing
 
@@ -104,7 +106,9 @@ def test_memory_cleanup():
     # Cleanup should have been triggered automatically
     current_stats = stats()
     memory_keys = current_stats.get("memory_keys", 0)
-    assert memory_keys <= max_size, f"Memory keys ({memory_keys}) should be <= {max_size}"
+    assert (
+        memory_keys <= max_size
+    ), f"Memory keys ({memory_keys}) should be <= {max_size}"
     print(f"✓ Auto-cleanup triggered, keys reduced to {memory_keys}")
 
     # Restore original max size
@@ -114,7 +118,9 @@ def test_memory_cleanup():
     removed = cleanup_memory(50)
     current_stats = stats()
     memory_keys = current_stats.get("memory_keys", 0)
-    assert memory_keys <= 50, f"Memory keys ({memory_keys}) should be <= 50 after manual cleanup"
+    assert (
+        memory_keys <= 50
+    ), f"Memory keys ({memory_keys}) should be <= 50 after manual cleanup"
     print(f"✓ Manual cleanup removed {removed} keys, {memory_keys} remaining")
 
     return True
@@ -140,12 +146,18 @@ def test_statistics():
     # Check stats
     current_stats = stats()
     assert current_stats["hits"] == 3, f"Expected 3 hits, got {current_stats['hits']}"
-    assert current_stats["misses"] == 2, f"Expected 2 misses, got {current_stats['misses']}"
-    assert current_stats["marks"] == 2, f"Expected 2 marks, got {current_stats['marks']}"
+    assert (
+        current_stats["misses"] == 2
+    ), f"Expected 2 misses, got {current_stats['misses']}"
+    assert (
+        current_stats["marks"] == 2
+    ), f"Expected 2 marks, got {current_stats['marks']}"
 
     hit_rate = current_stats["hit_rate"]
     expected_rate = 60.0  # 3 hits / 5 total * 100
-    assert abs(hit_rate - expected_rate) < 0.1, f"Hit rate {hit_rate}% != expected {expected_rate}%"
+    assert (
+        abs(hit_rate - expected_rate) < 0.1
+    ), f"Hit rate {hit_rate}% != expected {expected_rate}%"
 
     print(f"✓ Statistics tracking:")
     print(f"  - Backend: {current_stats['backend']}")
@@ -203,6 +215,7 @@ def main():
 
     # Check backend
     import api.core.idempotency as idem_module
+
     backend = "Redis" if idem_module._redis else "Memory"
     print(f"Using backend: {backend}")
 

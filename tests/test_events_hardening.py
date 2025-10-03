@@ -23,8 +23,11 @@ def test_upsert_topic_fields_persist(monkeypatch):
     the insert payload includes them. Uses a mocked engine and insert builder.
     """
     import types
+
+    from sqlalchemy import Column, Float, Integer, MetaData, Table, Text
+
     from api import events as ev
-    from sqlalchemy import MetaData, Table, Column, Text, Integer, Float
+
     try:
         from sqlalchemy.dialects.postgresql import JSONB
     except Exception:
@@ -37,7 +40,8 @@ def test_upsert_topic_fields_persist(monkeypatch):
     # Build a mock events table with needed columns
     md = MetaData()
     events_tbl = Table(
-        "events", md,
+        "events",
+        md,
         Column("event_key", Text, primary_key=True),
         Column("symbol", Text),
         Column("token_ca", Text),

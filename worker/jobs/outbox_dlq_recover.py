@@ -1,4 +1,5 @@
 """DLQ recovery job for push outbox entries."""
+
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict
@@ -6,9 +7,8 @@ from typing import Dict
 from sqlalchemy.orm import Session
 
 from api.core import metrics
-from api.db.models.push_outbox import PushOutbox, PushOutboxDLQ, OutboxStatus
 from api.database import build_engine_from_env, get_sessionmaker
-
+from api.db.models.push_outbox import OutboxStatus, PushOutbox, PushOutboxDLQ
 
 _DEFAULT_LIMIT = int(os.getenv("OUTBOX_DLQ_RECOVER_LIMIT", "50"))
 _DEFAULT_MAX_AGE = int(os.getenv("OUTBOX_DLQ_MAX_AGE_SEC", str(3600)))  # 1 hour
@@ -16,12 +16,11 @@ _DEFAULT_MAX_AGE = int(os.getenv("OUTBOX_DLQ_MAX_AGE_SEC", str(3600)))  # 1 hour
 
 def _get_counters() -> Dict[str, metrics.Counter]:
     recovered_counter = metrics.counter(
-        "dlq_recovered_count",
-        "Number of DLQ entries successfully recovered"
+        "dlq_recovered_count", "Number of DLQ entries successfully recovered"
     )
     discarded_counter = metrics.counter(
         "dlq_discarded_count",
-        "Number of DLQ entries discarded due to staleness or missing source"
+        "Number of DLQ entries discarded due to staleness or missing source",
     )
     return {
         "recovered": recovered_counter,
@@ -29,7 +28,9 @@ def _get_counters() -> Dict[str, metrics.Counter]:
     }
 
 
-def recover_batch(session: Session, *, limit: int | None = None, max_age_seconds: int | None = None) -> Dict[str, int]:
+def recover_batch(
+    session: Session, *, limit: int | None = None, max_age_seconds: int | None = None
+) -> Dict[str, int]:
     """Recover a batch of DLQ entries back into the main outbox table."""
     limit = limit or _DEFAULT_LIMIT
     max_age_seconds = max_age_seconds or _DEFAULT_MAX_AGE
@@ -92,7 +93,9 @@ def recover_batch(session: Session, *, limit: int | None = None, max_age_seconds
     }
 
 
-def recover_once(*, limit: int | None = None, max_age_seconds: int | None = None) -> Dict[str, int]:
+def recover_once(
+    *, limit: int | None = None, max_age_seconds: int | None = None
+) -> Dict[str, int]:
     """Standalone helper to run recovery with its own session."""
     engine = build_engine_from_env()
     SessionLocal = get_sessionmaker(engine)

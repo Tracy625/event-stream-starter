@@ -15,17 +15,16 @@ No push side-effects in MVP; downstream jobs (goplus_scan, rules) consume.
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text as sa_text
 
+from api.core.metrics import ca_hunter_ambiguous_total, ca_hunter_matched_total
+from api.core.metrics_store import log_json
+from api.database import with_db
+from api.providers.dex_provider import DexProvider
 from worker.app import app
 from worker.jobs.push_cards import process_card as push_card_task
-from api.database import with_db
-from api.core.metrics_store import log_json
-from api.core.metrics import ca_hunter_matched_total, ca_hunter_ambiguous_total
-from api.providers.dex_provider import DexProvider
-
 
 SCAN_WINDOW_MIN = 120
 TIME_PROXIMITY_MAX_MIN = 90
@@ -33,22 +32,31 @@ TIME_PROXIMITY_MAX_MIN = 90
 
 def _iter_candidate_events(db) -> List[Dict[str, Any]]:
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=SCAN_WINDOW_MIN)
-    rows = db.execute(sa_text(
-        """
+    rows = (
+        db.execute(
+            sa_text(
+                """
         SELECT event_key, summary, evidence, last_ts
           FROM events
          WHERE last_ts >= :cutoff
            AND (evidence IS NOT NULL)
            AND (summary IS NULL OR summary = '' OR summary IS NOT NULL)
         """
-    ), {"cutoff": cutoff}).mappings().fetchall()
+            ),
+            {"cutoff": cutoff},
+        )
+        .mappings()
+        .fetchall()
+    )
     out = []
     for r in rows:
-        out.append({
-            "event_key": r.get("event_key"),
-            "evidence": r.get("evidence") or [],
-            "last_ts": r.get("last_ts"),
-        })
+        out.append(
+            {
+                "event_key": r.get("event_key"),
+                "evidence": r.get("evidence") or [],
+                "last_ts": r.get("last_ts"),
+            }
+        )
     return out
 
 
@@ -102,7 +110,9 @@ def _extract_candidates(ev_items: List[Dict[str, Any]]) -> List[Tuple[str, str]]
     return uniq
 
 
-def _score_candidate(dp: DexProvider, chain: str, address: str, ev_ts: datetime) -> Tuple[float, Dict[str, Any]]:
+def _score_candidate(
+    dp: DexProvider, chain: str, address: str, ev_ts: datetime
+) -> Tuple[float, Dict[str, Any]]:
     """Score candidate using LP and pair_created_at if available."""
     details: Dict[str, Any] = {}
     try:
@@ -112,7 +122,9 @@ def _score_candidate(dp: DexProvider, chain: str, address: str, ev_ts: datetime)
         t_score = 0.0
         if isinstance(created_at, (int, float)):
             try:
-                pair_dt = datetime.fromtimestamp(float(created_at) / 1000.0, tz=timezone.utc)
+                pair_dt = datetime.fromtimestamp(
+                    float(created_at) / 1000.0, tz=timezone.utc
+                )
                 minutes = abs((ev_ts - pair_dt).total_seconds()) / 60.0
                 if minutes <= TIME_PROXIMITY_MAX_MIN:
                     t_score = max(0.0, 1.0 - (minutes / TIME_PROXIMITY_MAX_MIN))
@@ -124,7 +136,9 @@ def _score_candidate(dp: DexProvider, chain: str, address: str, ev_ts: datetime)
         if lp is not None and lp >= baseline:
             lp_gate = 1.0
         score = 0.6 * t_score + 0.4 * lp_gate
-        details.update({"lp": lp, "created_at": created_at, "t_score": t_score, "lp_gate": lp_gate})
+        details.update(
+            {"lp": lp, "created_at": created_at, "t_score": t_score, "lp_gate": lp_gate}
+        )
         return score, details
     except Exception as e:
         details["error"] = str(e)
@@ -146,7 +160,7 @@ def run_once(limit: int = 200) -> Dict[str, int]:
                 if not cands:
                     continue
                 stats["evaluated"] += 1
-                scored: List[Tuple[Tuple[str,str], float, Dict[str,Any]]] = []
+                scored: List[Tuple[Tuple[str, str], float, Dict[str, Any]]] = []
                 for ch, ca in cands:
                     s, det = _score_candidate(dp, ch, ca, last_ts)
                     scored.append(((ch, ca), s, det))
@@ -157,19 +171,42 @@ def run_once(limit: int = 200) -> Dict[str, int]:
                     # Accept and update events.token_ca (best-effort)
                     ch, ca = top[0]
                     try:
-                        db.execute(sa_text("UPDATE events SET token_ca = :ca WHERE event_key = :ek"), {"ek": ek, "ca": ca})
+                        db.execute(
+                            sa_text(
+                                "UPDATE events SET token_ca = :ca WHERE event_key = :ek"
+                            ),
+                            {"ek": ek, "ca": ca},
+                        )
                         stats["assigned"] += 1
-                        log_json(stage="ca_hunter.match", event_key=ek, chain=ch, ca=ca, score=top[1], margin=margin, details=top[2])
+                        log_json(
+                            stage="ca_hunter.match",
+                            event_key=ek,
+                            chain=ch,
+                            ca=ca,
+                            score=top[1],
+                            margin=margin,
+                            details=top[2],
+                        )
                         try:
                             ca_hunter_matched_total.inc()
                         except Exception:
                             pass
                     except Exception as e:
                         stats["errors"] += 1
-                        log_json(stage="ca_hunter.update_error", event_key=ek, error=str(e)[:200])
+                        log_json(
+                            stage="ca_hunter.update_error",
+                            event_key=ek,
+                            error=str(e)[:200],
+                        )
                 else:
                     stats["ambiguous"] += 1
-                    log_json(stage="ca_hunter.ambiguous", event_key=ek, top_score=top[1], margin=margin, candidates=len(scored))
+                    log_json(
+                        stage="ca_hunter.ambiguous",
+                        event_key=ek,
+                        top_score=top[1],
+                        margin=margin,
+                        candidates=len(scored),
+                    )
                     try:
                         ca_hunter_ambiguous_total.inc()
                     except Exception:
@@ -183,21 +220,34 @@ def run_once(limit: int = 200) -> Dict[str, int]:
                             created_at = det.get("created_at")
                             if isinstance(created_at, (int, float)):
                                 try:
-                                    t_delta = int(abs((last_ts - datetime.fromtimestamp(float(created_at)/1000.0, tz=timezone.utc)).total_seconds()) // 60)
+                                    t_delta = int(
+                                        abs(
+                                            (
+                                                last_ts
+                                                - datetime.fromtimestamp(
+                                                    float(created_at) / 1000.0,
+                                                    tz=timezone.utc,
+                                                )
+                                            ).total_seconds()
+                                        )
+                                        // 60
+                                    )
                                 except Exception:
                                     t_delta = None
-                            cands_payload.append({
-                                "chain": ch,
-                                "ca": ca,
-                                "pair_url": f"https://dexscreener.com/{ch}/{ca}",
-                                "lp_usd": det.get("lp"),
-                                "pair_created_at": det.get("created_at"),
-                                "txns": (det.get("txns") or {}),
-                                "score": round(s, 2),
-                                "margin": round(margin, 2),
-                                "evidence_strength": "medium",
-                                "t_delta_min": t_delta,
-                            })
+                            cands_payload.append(
+                                {
+                                    "chain": ch,
+                                    "ca": ca,
+                                    "pair_url": f"https://dexscreener.com/{ch}/{ca}",
+                                    "lp_usd": det.get("lp"),
+                                    "pair_created_at": det.get("created_at"),
+                                    "txns": (det.get("txns") or {}),
+                                    "score": round(s, 2),
+                                    "margin": round(margin, 2),
+                                    "evidence_strength": "medium",
+                                    "t_delta_min": t_delta,
+                                }
+                            )
 
                         signal = {
                             "type": "primary",
@@ -214,11 +264,20 @@ def run_once(limit: int = 200) -> Dict[str, int]:
                         }
                         # Determine channel
                         import os
-                        channel_id = os.getenv("TELEGRAM_TOPIC_CHAT_ID") or os.getenv("TELEGRAM_SANDBOX_CHANNEL_ID") or os.getenv("TG_CHANNEL_ID")
+
+                        channel_id = (
+                            os.getenv("TELEGRAM_TOPIC_CHAT_ID")
+                            or os.getenv("TELEGRAM_SANDBOX_CHANNEL_ID")
+                            or os.getenv("TG_CHANNEL_ID")
+                        )
                         if channel_id:
                             push_card_task.apply_async(args=[signal, str(channel_id)])
                     except Exception as e:
-                        log_json(stage="ca_hunter.ambiguous_push_error", event_key=ek, error=str(e)[:200])
+                        log_json(
+                            stage="ca_hunter.ambiguous_push_error",
+                            event_key=ek,
+                            error=str(e)[:200],
+                        )
             except Exception as e:
                 stats["errors"] += 1
                 log_json(stage="ca_hunter.error", error=str(e)[:200])

@@ -1,6 +1,6 @@
 import os
-from typing import Optional, List, Dict
 from datetime import datetime
+from typing import Dict, List, Optional
 
 _memory_seen = {}  # Changed to dict to store timestamps for cleanup
 _memory_stats = {"hits": 0, "misses": 0, "marks": 0}
@@ -20,8 +20,10 @@ except Exception:
 _KEY_PREFIX = "idem:x:"
 _MEMORY_MAX_SIZE = int(os.getenv("IDEM_MEMORY_MAX_SIZE", "10000"))
 
+
 def _rkey(key: str) -> str:
     return f"{_KEY_PREFIX}{key}"
+
 
 def seen(key: str) -> bool:
     """是否已处理过该幂等键。"""
@@ -37,6 +39,7 @@ def seen(key: str) -> bool:
     exists = key in _memory_seen
     _memory_stats["hits" if exists else "misses"] += 1
     return exists
+
 
 def mark(key: str, ttl_seconds: Optional[int] = 24 * 3600) -> None:
     """标记该幂等键为已处理。默认 24h 过期；无 redis 则进程内常驻。"""
@@ -55,6 +58,7 @@ def mark(key: str, ttl_seconds: Optional[int] = 24 * 3600) -> None:
     # Auto cleanup if memory grows too large
     if len(_memory_seen) > _MEMORY_MAX_SIZE:
         cleanup_memory(_MEMORY_MAX_SIZE)
+
 
 def seen_batch(keys: List[str]) -> Dict[str, bool]:
     """批量检查多个键"""
@@ -79,6 +83,7 @@ def seen_batch(keys: List[str]) -> Dict[str, bool]:
         _memory_stats["hits" if exists else "misses"] += 1
     return result_dict
 
+
 def mark_batch(keys: List[str], ttl_seconds: Optional[int] = 24 * 3600) -> None:
     """批量标记多个键为已处理"""
     _memory_stats["marks"] += len(keys)
@@ -102,6 +107,7 @@ def mark_batch(keys: List[str], ttl_seconds: Optional[int] = 24 * 3600) -> None:
     if len(_memory_seen) > _MEMORY_MAX_SIZE:
         cleanup_memory(_MEMORY_MAX_SIZE)
 
+
 def cleanup_memory(max_size: int = None) -> int:
     """防止内存无限增长，保留最近使用的键"""
     global _memory_seen
@@ -120,6 +126,7 @@ def cleanup_memory(max_size: int = None) -> int:
     removed = len(sorted_items) - keep_size
     return removed
 
+
 def stats() -> Dict[str, any]:
     """返回统计信息"""
     result = {
@@ -127,7 +134,11 @@ def stats() -> Dict[str, any]:
         "hits": _memory_stats["hits"],
         "misses": _memory_stats["misses"],
         "marks": _memory_stats["marks"],
-        "hit_rate": (_memory_stats["hits"] / max(_memory_stats["hits"] + _memory_stats["misses"], 1)) * 100
+        "hit_rate": (
+            _memory_stats["hits"]
+            / max(_memory_stats["hits"] + _memory_stats["misses"], 1)
+        )
+        * 100,
     }
 
     if _redis:
@@ -143,6 +154,7 @@ def stats() -> Dict[str, any]:
         result["memory_max_size"] = _MEMORY_MAX_SIZE
 
     return result
+
 
 def clear_all() -> int:
     """清除所有幂等键（仅用于测试或维护）"""
@@ -164,6 +176,7 @@ def clear_all() -> int:
     count = len(_memory_seen)
     _memory_seen.clear()
     return count
+
 
 def reset_stats() -> None:
     """重置统计计数器"""

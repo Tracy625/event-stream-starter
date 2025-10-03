@@ -3,10 +3,11 @@ Unit tests for topic detection and signal generation.
 Uses mocks to test business logic without database dependencies.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock, call
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, Mock, call, patch
+
+import pytest
 
 
 class TestTopicDetection:
@@ -45,7 +46,7 @@ class TestTopicDetection:
 class TestTopicSignalScan:
     """Test scan_topic_signals with mocked database"""
 
-    @patch('worker.jobs.topic_signal_scan.get_db_session')
+    @patch("worker.jobs.topic_signal_scan.get_db_session")
     def test_scan_creates_new_signals(self, mock_get_session):
         """Test that scan creates signals for events with topics"""
         from worker.jobs.topic_signal_scan import scan_topic_signals
@@ -61,7 +62,7 @@ class TestTopicSignalScan:
                 "topic_id": "t.abc123",
                 "topic_entities": ["pepe", "gem"],
                 "topic_confidence": 0.8,
-                "last_ts": datetime.now(timezone.utc)
+                "last_ts": datetime.now(timezone.utc),
             }
         ]
 
@@ -81,9 +82,13 @@ class TestTopicSignalScan:
 
         # Configure execute to return appropriate mock based on call count
         mock_session.execute.side_effect = [
-            MagicMock(mappings=MagicMock(return_value=mock_mappings_fetchall)),  # SELECT events
-            MagicMock(mappings=MagicMock(return_value=mock_mappings_fetchone)),  # SELECT existing signal
-            mock_insert_result  # INSERT
+            MagicMock(
+                mappings=MagicMock(return_value=mock_mappings_fetchall)
+            ),  # SELECT events
+            MagicMock(
+                mappings=MagicMock(return_value=mock_mappings_fetchone)
+            ),  # SELECT existing signal
+            mock_insert_result,  # INSERT
         ]
 
         result = scan_topic_signals()
@@ -98,7 +103,7 @@ class TestTopicSignalScan:
         # Verify commit was called
         mock_session.commit.assert_called_once()
 
-    @patch('worker.jobs.topic_signal_scan.get_db_session')
+    @patch("worker.jobs.topic_signal_scan.get_db_session")
     def test_scan_skips_non_topic_signals(self, mock_get_session):
         """Test that scan skips events with non-topic signals"""
         from worker.jobs.topic_signal_scan import scan_topic_signals
@@ -112,15 +117,19 @@ class TestTopicSignalScan:
                 "topic_id": "t.xyz789",
                 "topic_entities": ["arb"],
                 "topic_confidence": 0.6,
-                "last_ts": datetime.now(timezone.utc)
+                "last_ts": datetime.now(timezone.utc),
             }
         ]
 
         # Existing non-topic signal
         existing_signal = {"id": 1, "market_type": "risk"}
 
-        mock_session.execute.return_value.mappings.return_value.fetchall.return_value = mock_events
-        mock_session.execute.return_value.mappings.return_value.fetchone.return_value = existing_signal
+        mock_session.execute.return_value.mappings.return_value.fetchall.return_value = (
+            mock_events
+        )
+        mock_session.execute.return_value.mappings.return_value.fetchone.return_value = (
+            existing_signal
+        )
 
         result = scan_topic_signals()
 
@@ -135,7 +144,7 @@ class TestTopicSignalScan:
 class TestTopicAggregate:
     """Test aggregate_topics with mocked database"""
 
-    @patch('worker.jobs.topic_aggregate.get_db_session')
+    @patch("worker.jobs.topic_aggregate.get_db_session")
     def test_aggregate_flattens_entities(self, mock_get_session):
         """Test that aggregate correctly flattens entity arrays"""
         from worker.jobs.topic_aggregate import aggregate_topics
@@ -149,11 +158,13 @@ class TestTopicAggregate:
                 "topic_hash": "t.hash1",
                 "all_entities": [["pepe"], ["pepe", "gem"], ["gem"]],  # Nested arrays
                 "mention_count": 3,
-                "latest_ts": datetime.now(timezone.utc)
+                "latest_ts": datetime.now(timezone.utc),
             }
         ]
 
-        mock_session.execute.return_value.mappings.return_value.fetchall.return_value = mock_rows
+        mock_session.execute.return_value.mappings.return_value.fetchall.return_value = (
+            mock_rows
+        )
 
         result = aggregate_topics()
 
@@ -166,7 +177,7 @@ class TestTopicAggregate:
         assert set(candidate["entities"]) == {"gem", "pepe"}  # Flattened and deduped
         assert candidate["mention_count"] == 3
 
-    @patch('worker.jobs.topic_aggregate.get_db_session')
+    @patch("worker.jobs.topic_aggregate.get_db_session")
     def test_aggregate_handles_null_entities(self, mock_get_session):
         """Test that aggregate handles NULL entities gracefully"""
         from worker.jobs.topic_aggregate import aggregate_topics
@@ -179,11 +190,13 @@ class TestTopicAggregate:
                 "topic_hash": "t.hash2",
                 "all_entities": None,  # NULL from database
                 "mention_count": 1,
-                "latest_ts": datetime.now(timezone.utc)
+                "latest_ts": datetime.now(timezone.utc),
             }
         ]
 
-        mock_session.execute.return_value.mappings.return_value.fetchall.return_value = mock_rows
+        mock_session.execute.return_value.mappings.return_value.fetchall.return_value = (
+            mock_rows
+        )
 
         result = aggregate_topics()
 

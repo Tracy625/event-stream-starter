@@ -1,5 +1,5 @@
 """Rules engine module for event evaluation."""
 
-from .eval_event import RuleLoader, RuleEvaluator
+from .eval_event import RuleEvaluator, RuleLoader
 
 __all__ = ["RuleLoader", "RuleEvaluator"]

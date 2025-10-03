@@ -51,7 +51,12 @@ def _extract_urls(item: Dict[str, Any]) -> List[str]:
 def map_apify_tweet(item: Dict[str, Any]) -> Dict[str, Any]:
     """Map a single Apify dataset item to unified tweet schema."""
     # Apify Tweet Scraper often provides id, userScreenName, fullText/text, createdAt
-    tid = _norm_str(item.get("id") or item.get("rest_id") or item.get("tweetId") or item.get("id_str"))
+    tid = _norm_str(
+        item.get("id")
+        or item.get("rest_id")
+        or item.get("tweetId")
+        or item.get("id_str")
+    )
     # Prefer nested user.screen_name when present
     user = item.get("user") if isinstance(item.get("user"), dict) else None
     author = _norm_str(
@@ -60,8 +65,18 @@ def map_apify_tweet(item: Dict[str, Any]) -> Dict[str, Any]:
         or item.get("screenName")
         or item.get("author")
     )
-    text = _norm_str(item.get("fullText") or item.get("full_text") or item.get("text") or item.get("body"))
-    created = _norm_str(item.get("createdAt") or item.get("created_at") or item.get("time") or item.get("ts"))
+    text = _norm_str(
+        item.get("fullText")
+        or item.get("full_text")
+        or item.get("text")
+        or item.get("body")
+    )
+    created = _norm_str(
+        item.get("createdAt")
+        or item.get("created_at")
+        or item.get("time")
+        or item.get("ts")
+    )
     urls = _extract_urls(item)
     return {
         "id": tid,
@@ -89,5 +104,11 @@ def map_apify_user(item: Dict[str, Any]) -> Dict[str, Any]:
         or item.get("avatar_url")
         or item.get("profile_image_url")
     )
-    ts = _norm_str(item.get("ts") or item.get("time") or item.get("createdAt") or item.get("updatedAt") or "")
+    ts = _norm_str(
+        item.get("ts")
+        or item.get("time")
+        or item.get("createdAt")
+        or item.get("updatedAt")
+        or ""
+    )
     return {"handle": handle, "avatar_url": avatar, "ts": ts}

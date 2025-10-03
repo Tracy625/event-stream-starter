@@ -1,18 +1,22 @@
 """Contract address normalization utility"""
-from typing import Optional
+
 import re
+from typing import Optional
+
 from api.core.metrics_store import log_json
 
 
-def normalize_ca(chain: str, ca: Optional[str], is_official_guess: bool = False) -> dict:
+def normalize_ca(
+    chain: str, ca: Optional[str], is_official_guess: bool = False
+) -> dict:
     """
     Normalize contract address for a given chain
-    
+
     Args:
         chain: Blockchain identifier (eth/bsc/arb/op/base for EVM, sol for non-EVM)
         ca: Raw contract address string
         is_official_guess: Whether this is an official guess
-    
+
     Returns:
         Dictionary with normalization result:
         {
@@ -22,12 +26,8 @@ def normalize_ca(chain: str, ca: Optional[str], is_official_guess: bool = False)
         }
     """
     # Initialize result
-    result = {
-        "ca_norm": None,
-        "valid": False,
-        "is_official_guess": is_official_guess
-    }
-    
+    result = {"ca_norm": None, "valid": False, "is_official_guess": is_official_guess}
+
     # Handle None/empty input
     if not ca or not isinstance(ca, str):
         log_json(
@@ -36,13 +36,13 @@ def normalize_ca(chain: str, ca: Optional[str], is_official_guess: bool = False)
             raw=ca,
             norm=None,
             valid=False,
-            is_official_guess=is_official_guess
+            is_official_guess=is_official_guess,
         )
         return result
-    
+
     # Clean whitespace
     raw = ca.strip() if isinstance(ca, str) else ca
-    
+
     # Handle EVM chains
     if chain in {"eth", "bsc", "arb", "op", "base"}:
         # EVM: 允许无 0x，统一小写并补前缀；仅接受 40 个十六进制字符
@@ -57,17 +57,17 @@ def normalize_ca(chain: str, ca: Optional[str], is_official_guess: bool = False)
         else:
             result["ca_norm"] = None
             result["valid"] = False
-        
+
         log_json(
             stage="ca.normalize",
             chain=chain,
             raw=ca,
             norm=result["ca_norm"],
             valid=result["valid"],
-            is_official_guess=is_official_guess
+            is_official_guess=is_official_guess,
         )
         return result
-    
+
     # Handle non-EVM chains (sol, etc.) - no normalization
     # Return None for ca_norm, valid=False
     log_json(
@@ -76,6 +76,6 @@ def normalize_ca(chain: str, ca: Optional[str], is_official_guess: bool = False)
         raw=ca,
         norm=None,
         valid=False,
-        is_official_guess=is_official_guess
+        is_official_guess=is_official_guess,
     )
     return result

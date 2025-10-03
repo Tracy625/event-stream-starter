@@ -1,7 +1,6 @@
-from sqlalchemy import (
-    Column, BigInteger, Text, Boolean, Float, Integer,
-    ForeignKey, ARRAY, TIMESTAMP, text as sa_text,
-)
+from sqlalchemy import (ARRAY, TIMESTAMP, BigInteger, Boolean, Column, Float,
+                        ForeignKey, Integer, Text)
+from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base
 
@@ -12,8 +11,8 @@ __all__ = ["Base", "metadata"]
 
 
 class RawPost(Base):
-    __tablename__ = 'raw_posts'
-    
+    __tablename__ = "raw_posts"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     source = Column(Text, nullable=False)
     author = Column(Text)
@@ -29,8 +28,8 @@ class RawPost(Base):
 
 
 class Event(Base):
-    __tablename__ = 'events'
-    
+    __tablename__ = "events"
+
     event_key = Column(Text, primary_key=True)
     type = Column(Text)
     summary = Column(Text)
@@ -44,10 +43,10 @@ class Event(Base):
 
 
 class Signal(Base):
-    __tablename__ = 'signals'
+    __tablename__ = "signals"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    event_key = Column(Text, ForeignKey('events.event_key', ondelete='CASCADE'))
+    event_key = Column(Text, ForeignKey("events.event_key", ondelete="CASCADE"))
     type = Column(Text, nullable=False)
     market_type = Column(Text)
     advice_tag = Column(Text)

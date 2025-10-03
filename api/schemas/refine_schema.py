@@ -1,5 +1,7 @@
 from typing import List
+
 from pydantic import BaseModel, Field, validator
+
 
 class RefineModel(BaseModel):
     type: str = Field(..., min_length=1, max_length=40)

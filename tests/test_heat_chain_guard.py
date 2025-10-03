@@ -7,6 +7,7 @@ def test_heat_persist_symbol_fallback_disabled(monkeypatch):
             class R:
                 def fetchone(self_inner):
                     return None
+
             return R()
 
     # Disable symbol fallback explicitly
@@ -16,6 +17,12 @@ def test_heat_persist_symbol_fallback_disabled(monkeypatch):
 
     db = DummyDB()
     # token has symbol but no CA; expect False due to disabled fallback
-    ok = persist_heat(db, token="PEPE", token_ca=None, heat={"cnt_10m": 1, "cnt_30m": 2}, upsert=True, strict_match=False)
+    ok = persist_heat(
+        db,
+        token="PEPE",
+        token_ca=None,
+        heat={"cnt_10m": 1, "cnt_30m": 2},
+        upsert=True,
+        strict_match=False,
+    )
     assert ok is False
-

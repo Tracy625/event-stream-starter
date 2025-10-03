@@ -1,7 +1,9 @@
 """Security check schemas for GoPlus integration"""
-from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field, ConfigDict
+
 from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # Request schemas
@@ -22,19 +24,25 @@ class ApprovalSecurityRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     chain_id: str = Field(..., description="Blockchain chain ID")
     address: str = Field(..., description="Contract address")
-    type: Literal["erc20", "erc721", "erc1155"] = Field("erc20", description="Token type")
+    type: Literal["erc20", "erc721", "erc1155"] = Field(
+        "erc20", description="Token type"
+    )
     raw: bool = Field(False, description="Include raw response data")
 
 
 # Response schemas
 class SecuritySummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    risk_label: Literal["red", "yellow", "green", "unknown"] = Field(..., description="Risk assessment label")
+    risk_label: Literal["red", "yellow", "green", "unknown"] = Field(
+        ..., description="Risk assessment label"
+    )
     buy_tax: Optional[float] = Field(None, description="Buy tax percentage")
     sell_tax: Optional[float] = Field(None, description="Sell tax percentage")
     lp_lock_days: Optional[int] = Field(None, description="Liquidity pool lock days")
     honeypot: Optional[bool] = Field(None, description="Honeypot detection")
-    blacklist_flags: List[str] = Field(default_factory=list, description="Blacklist indicators")
+    blacklist_flags: List[str] = Field(
+        default_factory=list, description="Blacklist indicators"
+    )
 
 
 class SecurityResponse(BaseModel):
@@ -43,8 +51,12 @@ class SecurityResponse(BaseModel):
     cache: bool = Field(False, description="Whether response is from cache")
     stale: bool = Field(False, description="Whether cached data is stale")
     summary: SecuritySummary = Field(..., description="Security check summary")
-    notes: List[str] = Field(default_factory=list, description="Additional notes or warnings")
-    raw: Optional[Dict[str, Any]] = Field(None, description="Raw API response if requested")
+    notes: List[str] = Field(
+        default_factory=list, description="Additional notes or warnings"
+    )
+    raw: Optional[Dict[str, Any]] = Field(
+        None, description="Raw API response if requested"
+    )
 
 
 # Cache schemas
@@ -63,6 +75,7 @@ class GoPlusCacheEntry(BaseModel):
 # Provider result schema
 class SecurityResult(BaseModel):
     """Internal security check result from provider"""
+
     model_config = ConfigDict(extra="forbid")
     risk_label: Literal["red", "yellow", "green", "unknown"]
     buy_tax: Optional[float] = None

@@ -6,19 +6,19 @@ Create Date: 2025-09-07
 
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = '009'
-down_revision = '008'
+revision = "009"
+down_revision = "008"
 branch_labels = None
 depends_on = None
 
 
 def upgrade():
-    op.add_column('signals', sa.Column('heat_slope', sa.Float(), nullable=True))
+    op.add_column("signals", sa.Column("heat_slope", sa.Float(), nullable=True))
 
 
 def downgrade():
-    op.drop_column('signals', 'heat_slope')
+    op.drop_column("signals", "heat_slope")

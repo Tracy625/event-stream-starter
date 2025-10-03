@@ -1,50 +1,43 @@
 """
 Card rendering and push pipeline with unified degradation and error handling
 """
+
 import json
 import time
-from pathlib import Path
-from typing import Dict, Any, Literal, Optional, Tuple
 from datetime import datetime, timezone
-from jinja2 import Environment, FileSystemLoader, TemplateNotFound
-from jsonschema import validate, ValidationError, Draft7Validator
+from pathlib import Path
+from typing import Any, Dict, Literal, Optional, Tuple
 
-from api.cards.registry import (
-    CARD_ROUTES, CARD_TEMPLATES, CardType,
-    normalize_card_type, UnknownCardTypeError,
-    RenderPayload
-)
-from api.cards.dedup import should_emit, mark_emitted
+from jinja2 import Environment, FileSystemLoader, TemplateNotFound
+from jsonschema import Draft7Validator, ValidationError, validate
+
+from api.cards.dedup import mark_emitted, should_emit
+from api.cards.registry import (CARD_ROUTES, CARD_TEMPLATES, CardType,
+                                RenderPayload, UnknownCardTypeError,
+                                normalize_card_type)
 from api.cards.transformers import to_pushcard
-from api.utils.logging import log_json
+# Import metrics from centralized registry - no new registrations here!
+from api.core.metrics import (cards_generated_total, cards_pipeline_latency_ms,
+                              cards_push_fail_total, cards_push_total,
+                              cards_render_fail_total,
+                              cards_unknown_type_count)
 from api.services.telegram import TelegramNotifier
+from api.utils.logging import log_json
+
 # Note: Outbox repository helpers are imported in worker/jobs/push_cards.py.
 # render_pipeline itself does not depend on them; avoid importing here to
 # keep API-side usage lightweight and prevent import errors in minimal envs.
 # Avoid importing DB session helpers here; pipeline does not persist state directly.
 
-# Import metrics from centralized registry - no new registrations here!
-from api.core.metrics import (
-    cards_generated_total,
-    cards_render_fail_total,
-    cards_push_total,
-    cards_push_fail_total,
-    cards_pipeline_latency_ms,
-    cards_unknown_type_count
-)
 
 # Reusable Jinja2 environments (module-level singletons)
-_env_tg = Environment(
-    loader=FileSystemLoader("templates/cards"),
-    autoescape=False
-)
-_env_ui = Environment(
-    loader=FileSystemLoader("templates/cards"),
-    autoescape=True
-)
+_env_tg = Environment(loader=FileSystemLoader("templates/cards"), autoescape=False)
+_env_ui = Environment(loader=FileSystemLoader("templates/cards"), autoescape=True)
 
-def check_template_exists(template_base: str, channel: Literal["tg", "ui"],
-                         env: Optional[Environment] = None) -> bool:
+
+def check_template_exists(
+    template_base: str, channel: Literal["tg", "ui"], env: Optional[Environment] = None
+) -> bool:
     """
     Check if template exists using Jinja2 loader
 
@@ -67,7 +60,10 @@ def check_template_exists(template_base: str, channel: Literal["tg", "ui"],
     except TemplateNotFound:
         return False
 
-def render_template(payload: RenderPayload, channel: Literal["tg", "ui"]) -> Tuple[str, bool]:
+
+def render_template(
+    payload: RenderPayload, channel: Literal["tg", "ui"]
+) -> Tuple[str, bool]:
     """
     Render template with degradation on failure
 
@@ -91,9 +87,11 @@ def render_template(payload: RenderPayload, channel: Literal["tg", "ui"]) -> Tup
             log_json(
                 stage="cards.template_missing",
                 template=f"{template_base}.{channel}.j2",
-                type=card_type
+                type=card_type,
             )
-            cards_render_fail_total.inc({"type": card_type, "reason": "template_missing"})
+            cards_render_fail_total.inc(
+                {"type": card_type, "reason": "template_missing"}
+            )
 
             # Degraded fallback
             return _render_degraded(payload, channel), True
@@ -108,7 +106,7 @@ def render_template(payload: RenderPayload, channel: Literal["tg", "ui"]) -> Tup
             stage="cards.rendered",
             template=template_name,
             type=card_type,
-            latency_ms=latency_ms
+            latency_ms=latency_ms,
         )
 
         return rendered, False
@@ -118,10 +116,11 @@ def render_template(payload: RenderPayload, channel: Literal["tg", "ui"]) -> Tup
             stage="cards.render_error",
             error=str(e),
             template=template_base,
-            type=card_type
+            type=card_type,
         )
         cards_render_fail_total.inc({"type": card_type, "reason": "render_error"})
         return _render_degraded(payload, channel), True
+
 
 def _render_degraded(payload: RenderPayload, channel: Literal["tg", "ui"]) -> str:
     """Generate degraded text output when template fails"""
@@ -137,17 +136,20 @@ def _render_degraded(payload: RenderPayload, channel: Literal["tg", "ui"]) -> st
             f"风险: {ctx.get('risk_level', 'unknown')}",
             f"时间: {ctx.get('data_as_of', 'N/A')}",
             "",
-            "_服务降级，显示简化内容_"
+            "_服务降级，显示简化内容_",
         ]
         return "\n".join(lines)
     else:
         # Plain text for UI
         return f"{card_type} Card (Degraded)\nSymbol: {ctx.get('token_info', {}).get('symbol', 'UNKNOWN')}\nRisk: {ctx.get('risk_level', 'unknown')}"
 
-def render_and_push(signal: Dict[str, Any],
-                    channel_id: str,
-                    channel: Literal["tg", "ui"] = "tg",
-                    now: Optional[datetime] = None) -> Dict[str, Any]:
+
+def render_and_push(
+    signal: Dict[str, Any],
+    channel_id: str,
+    channel: Literal["tg", "ui"] = "tg",
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
     """
     Complete pipeline: route → generate → render → validate → push
 
@@ -172,11 +174,7 @@ def render_and_push(signal: Dict[str, Any],
         try:
             card_type = normalize_card_type(raw_type)
         except UnknownCardTypeError as e:
-            log_json(
-                stage="cards.unknown_type",
-                type=raw_type,
-                error=str(e)
-            )
+            log_json(stage="cards.unknown_type", type=raw_type, error=str(e))
             cards_unknown_type_count.inc({"type": raw_type})
             return {"success": False, "error": str(e)}
 
@@ -188,20 +186,21 @@ def render_and_push(signal: Dict[str, Any],
             payload = generator(signal, now=now)
             cards_generated_total.inc({"type": card_type})
         except Exception as e:
-            log_json(
-                stage="cards.generate_error",
-                type=card_type,
-                error=str(e)
-            )
+            log_json(stage="cards.generate_error", type=card_type, error=str(e))
             return {"success": False, "error": f"Generation failed: {str(e)}"}
 
         # 3.1 Enforce SOL green guardrail: do not allow green on Solana before light checks exist
         try:
             token_info = payload.get("context", {}).get("token_info", {})
-            if (token_info.get("chain") == "sol") and (payload.get("context", {}).get("risk_level") == "green"):
+            if (token_info.get("chain") == "sol") and (
+                payload.get("context", {}).get("risk_level") == "green"
+            ):
                 payload["context"]["risk_level"] = "yellow"
                 payload["context"].setdefault("states", {})["degrade"] = True
-                log_json(stage="cards.guardrail.sol_green_blocked", event_key=payload.get("meta", {}).get("event_key"))
+                log_json(
+                    stage="cards.guardrail.sol_green_blocked",
+                    event_key=payload.get("meta", {}).get("event_key"),
+                )
         except Exception:
             pass
 
@@ -209,6 +208,7 @@ def render_and_push(signal: Dict[str, Any],
         try:
             if channel == "tg":
                 from api.cache import get_redis_client
+
                 rc = get_redis_client()
                 if rc is not None:
                     meta = payload.get("meta", {})
@@ -223,17 +223,25 @@ def render_and_push(signal: Dict[str, Any],
                     try:
                         if ctx.get("ambiguous_candidates"):
                             reason_bucket = "ambiguous"
-                        elif t == "secondary" and str(ctx.get("risk_note", "")).startswith("代理触发"):
+                        elif t == "secondary" and str(
+                            ctx.get("risk_note", "")
+                        ).startswith("代理触发"):
                             reason_bucket = "secondary_proxy"
                         elif t == "market_risk" or ctx.get("rules_fired"):
                             reason_bucket = "market_risk"
                     except Exception:
                         pass
                     bucket = int(now.timestamp() // 1800)
-                    dedup_key = f"cards:dedup:{event_or_ca}:{t}:{reason_bucket}:{bucket}"
+                    dedup_key = (
+                        f"cards:dedup:{event_or_ca}:{t}:{reason_bucket}:{bucket}"
+                    )
                     if not rc.set(dedup_key, "1", nx=True, ex=7200):
                         log_json(stage="cards.short_dedup.skip", key=dedup_key)
-                        return {"success": False, "error": "Short-window dedup", "dedup": True}
+                        return {
+                            "success": False,
+                            "error": "Short-window dedup",
+                            "dedup": True,
+                        }
         except Exception:
             pass
 
@@ -243,11 +251,7 @@ def render_and_push(signal: Dict[str, Any],
             state_version = signal.get("state_version") or "v0"
             can_emit, reason = should_emit(event_key, state_version)
             if not can_emit:
-                log_json(
-                    stage="cards.dedup_skip",
-                    event_key=event_key,
-                    reason=reason
-                )
+                log_json(stage="cards.dedup_skip", event_key=event_key, reason=reason)
                 return {"success": False, "error": f"Dedup: {reason}", "dedup": True}
 
         # 5. Render template
@@ -267,23 +271,17 @@ def render_and_push(signal: Dict[str, Any],
                 try:
                     validate(pushcard, schema)
                 except ValidationError as e:
-                    log_json(
-                        stage="cards.schema_error",
-                        error=str(e),
-                        type=card_type
-                    )
+                    log_json(stage="cards.schema_error", error=str(e), type=card_type)
                     # Mark as degraded but continue push
                     payload["meta"]["degrade"] = True
                     pushcard.setdefault("states", {})["degrade"] = True
-                    cards_render_fail_total.inc({"type": card_type, "reason": "schema_invalid"})
+                    cards_render_fail_total.inc(
+                        {"type": card_type, "reason": "schema_invalid"}
+                    )
                     # Continue
             except Exception as e:
                 # Any schema loading/resolution error → log and continue (do not fail pipeline)
-                log_json(
-                    stage="cards.schema_error",
-                    error=str(e),
-                    type=card_type
-                )
+                log_json(stage="cards.schema_error", error=str(e), type=card_type)
                 payload["meta"]["degrade"] = True
                 pushcard.setdefault("states", {})["degrade"] = True
 
@@ -294,7 +292,7 @@ def render_and_push(signal: Dict[str, Any],
                 chat_id=channel_id,
                 text=rendered_text,
                 parse_mode="HTML",
-                event_key=event_key
+                event_key=event_key,
             )
 
             if result.get("success"):
@@ -313,15 +311,13 @@ def render_and_push(signal: Dict[str, Any],
             return {"success": True, "content": rendered_text}
 
     except Exception as e:
-        log_json(
-            stage="cards.pipeline_error",
-            error=str(e)
-        )
+        log_json(stage="cards.pipeline_error", error=str(e))
         return {"success": False, "error": str(e)}
     finally:
         latency_ms = int((time.time() - start_time) * 1000)
         if card_type:
             cards_pipeline_latency_ms.observe(latency_ms, {"type": card_type})
+
 
 def _classify_error_code(result: Dict[str, Any]) -> str:
     """Classify error code for metrics"""

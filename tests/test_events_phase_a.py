@@ -30,7 +30,8 @@ def test_make_event_key_v2_symbol_normalization(monkeypatch):
 
 
 def test_merge_evidence_completion():
-    from api.events import merge_event_evidence, _build_evidence_item
+    from api.events import _build_evidence_item, merge_event_evidence
+
     fixed_ts = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
     existing = [
@@ -58,4 +59,3 @@ def test_merge_evidence_completion():
     ref = merged[0]["ref"]
     assert ref.get("tweet_id") == "12345"
     assert ref.get("url").startswith("https://twitter.com/")
-

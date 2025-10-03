@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Verify topic signal API functionality"""
 
+import json
 import os
 import sys
-import json
 import time
-import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-sys.path.insert(0, '/Users/tracy-mac/Desktop/GUIDS')
+import requests
+
+sys.path.insert(0, "/Users/tracy-mac/Desktop/GUIDS")
 
 from api.core.metrics_store import log_json
 
@@ -16,11 +17,22 @@ BASE = os.getenv("API_BASE", "http://localhost:8000")
 TOPIC_ID = os.getenv("TEST_TOPIC_ID", "t.test")
 
 REQUIRED_FIELDS = [
-    "type","topic_id","topic_entities","keywords",
-    "slope_10m","slope_30m","mention_count_24h",
-    "confidence","sources","evidence_links",
-    "calc_version","ts","degrade","topic_merge_mode"
+    "type",
+    "topic_id",
+    "topic_entities",
+    "keywords",
+    "slope_10m",
+    "slope_30m",
+    "mention_count_24h",
+    "confidence",
+    "sources",
+    "evidence_links",
+    "calc_version",
+    "ts",
+    "degrade",
+    "topic_merge_mode",
 ]
+
 
 def fail(msg, payload=None):
     print(f"[FAIL] {msg}")
@@ -31,11 +43,12 @@ def fail(msg, payload=None):
             print(payload)
     sys.exit(1)
 
+
 def main():
     """Verify /signals/topic endpoint"""
-    
+
     url = f"{BASE}/signals/topic"
-    
+
     try:
         # Test with entities parameter
         print("Testing /signals/topic with entities...")
@@ -57,33 +70,35 @@ def main():
     for k in REQUIRED_FIELDS:
         if k not in data:
             fail(f"missing field: {k}", data)
-    
+
     # Validate field types
     if data.get("type") != "topic":
         fail(f"type must be 'topic', got: {data.get('type')}", data)
-    
+
     # Check slopes are numeric
     for k in ["slope_10m", "slope_30m"]:
         if not isinstance(data.get(k), (int, float)):
             fail(f"{k} must be number, got: {type(data.get(k))}", data)
-    
+
     # Check confidence is numeric and in range
     confidence = data.get("confidence")
     if not isinstance(confidence, (int, float)):
         fail(f"confidence must be number, got: {type(confidence)}", data)
     if not 0 <= confidence <= 1:
         fail(f"confidence must be 0-1, got: {confidence}", data)
-    
+
     # Check arrays are arrays
     for k in ["topic_entities", "keywords", "sources", "evidence_links"]:
         if not isinstance(data.get(k), list):
             fail(f"{k} must be array, got: {type(data.get(k))}", data)
-    
+
     # Optional: enforce slope difference for acceptance when requested
     if os.getenv("EXPECT_SLOPE_DIFF") == "1":
         if float(data.get("slope_10m", 0.0)) == float(data.get("slope_30m", 0.0)):
-            fail("slope_10m equals slope_30m; expect difference within 24h window", data)
-    
+            fail(
+                "slope_10m equals slope_30m; expect difference within 24h window", data
+            )
+
     print("[OK] verify_topic_signal passed")
     print(f"  Topic ID: {data.get('topic_id')}")
     print(f"  Entities: {data.get('topic_entities')}")
@@ -92,6 +107,7 @@ def main():
     print(f"  Confidence: {data.get('confidence')}")
     print(f"  Sources: {data.get('sources')}")
     return True
+
 
 if __name__ == "__main__":
     main()

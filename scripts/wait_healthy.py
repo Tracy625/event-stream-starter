@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
+import json
 import os
 import sys
 import time
-import json
 import urllib.request
 
 url = os.environ.get("API_HEALTH_URL", "http://localhost:8000/healthz")
@@ -14,7 +14,12 @@ while time.time() - start < timeout:
     try:
         with urllib.request.urlopen(url, timeout=3) as r:
             data = r.read().decode("utf-8").lower()
-            if '"ok"' in data or '"healthy"' in data or 'ok' in data or 'healthy' in data:
+            if (
+                '"ok"' in data
+                or '"healthy"' in data
+                or "ok" in data
+                or "healthy" in data
+            ):
                 ok = True
                 break
     except Exception:

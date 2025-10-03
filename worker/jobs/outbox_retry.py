@@ -1,16 +1,17 @@
 """Outbox retry job for processing pending messages"""
-import time
+
 import random
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from api.core import metrics
+
+from api.core import metrics, tracing
 from api.core.metrics_store import log_json
-from api.core import tracing
+from api.database import build_engine_from_env, get_sessionmaker
 from api.db.repositories import outbox_repo
 from api.services.telegram import TelegramNotifier
-from api.database import build_engine_from_env, get_sessionmaker
 
 
 def process_outbox_batch(session: Session, limit: int = 50) -> int:
@@ -46,24 +47,17 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
         stage="outbox.batch.start",
         trace_id=trace_id,
         backlog_before=backlog_count,
-        limit=limit
+        limit=limit,
     )
 
     # Fetch messages that are due for processing (with row locking)
     messages = outbox_repo.fetch_due(session, limit=limit)
 
     if not messages:
-        log_json(
-            stage="outbox.batch.empty",
-            trace_id=trace_id
-        )
+        log_json(stage="outbox.batch.empty", trace_id=trace_id)
         return 0
 
-    log_json(
-        stage="outbox.batch.fetched",
-        trace_id=trace_id,
-        count=len(messages)
-    )
+    log_json(stage="outbox.batch.fetched", trace_id=trace_id, count=len(messages))
 
     # Initialize notifier once for the batch
     notifier = TelegramNotifier()
@@ -93,7 +87,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
                 trace_id=trace_id,
                 row_id=msg.id,
                 event_key=msg.event_key,
-                attempt=msg.attempt + 1
+                attempt=msg.attempt + 1,
             )
 
             # Send message
@@ -103,7 +97,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
                 parse_mode="HTML",
                 disable_notification=False,
                 event_key=msg.event_key,
-                attempt=(msg.attempt or 0) + 1
+                attempt=(msg.attempt or 0) + 1,
             )
 
             if res.get("success"):
@@ -117,7 +111,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
                     trace_id=trace_id,
                     row_id=msg.id,
                     event_key=msg.event_key,
-                    message_id=res.get("message_id")
+                    message_id=res.get("message_id"),
                 )
 
             else:
@@ -132,7 +126,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
                     attempt=msg.attempt + 1,
                     status_code=status_code,
                     error_code=error_code,
-                    retry_after=retry_after
+                    retry_after=retry_after,
                 )
 
                 # Determine if this is a permanent error
@@ -140,12 +134,13 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
 
                 if is_permanent or msg.attempt >= outbox_repo.MAX_RETRY_ATTEMPTS - 1:
                     # Move to DLQ for permanent errors or max attempts reached
-                    snapshot = msg.payload_json if isinstance(msg.payload_json, dict) else {"text": text}
+                    snapshot = (
+                        msg.payload_json
+                        if isinstance(msg.payload_json, dict)
+                        else {"text": text}
+                    )
                     outbox_repo.move_to_dlq(
-                        session,
-                        row_id=msg.id,
-                        last_error=error_msg,
-                        snapshot=snapshot
+                        session, row_id=msg.id, last_error=error_msg, snapshot=snapshot
                     )
                     dlq_moved += 1
                     dlq_counter.inc()
@@ -157,7 +152,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
                         row_id=msg.id,
                         event_key=msg.event_key,
                         reason="permanent_error" if is_permanent else "max_retries",
-                        error=error_msg
+                        error=error_msg,
                     )
 
                 else:
@@ -167,7 +162,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
                         row_id=msg.id,
                         next_try_at=next_try_at,
                         last_error=error_msg,
-                        attempt_inc=1
+                        attempt_inc=1,
                     )
 
                     if success:
@@ -181,7 +176,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
                             event_key=msg.event_key,
                             next_attempt=msg.attempt + 1,
                             next_try_at=next_try_at.isoformat(),
-                            error=error_msg
+                            error=error_msg,
                         )
 
             processed += 1
@@ -196,7 +191,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
                 trace_id=trace_id,
                 row_id=msg.id,
                 event_key=msg.event_key,
-                error=str(e)
+                error=str(e),
             )
 
             # Rollback this message's transaction
@@ -212,7 +207,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
                     row_id=msg.id,
                     next_try_at=next_try_at,
                     last_error=f"Processing error: {str(e)}",
-                    attempt_inc=1
+                    attempt_inc=1,
                 )
 
                 if success:
@@ -228,7 +223,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
                     stage="outbox.message.fatal",
                     trace_id=trace_id,
                     row_id=msg.id,
-                    error=str(inner_e)
+                    error=str(inner_e),
                 )
                 session.rollback()
 
@@ -243,7 +238,7 @@ def process_outbox_batch(session: Session, limit: int = 50) -> int:
         succeeded=succeeded,
         retried=retried,
         dlq_moved=dlq_moved,
-        backlog_after=backlog_count
+        backlog_after=backlog_count,
     )
 
     return processed
@@ -253,7 +248,7 @@ def calculate_next_retry(
     attempt: int,
     status_code: Optional[int] = None,
     error_code: Optional[int] = None,
-    retry_after: Optional[int] = None
+    retry_after: Optional[int] = None,
 ) -> datetime:
     """
     Calculate next retry time based on error type and attempt number
@@ -280,14 +275,14 @@ def calculate_next_retry(
     # Server errors or network issues - exponential backoff with jitter
     elif status_code >= 500 or status_code == 0:
         # Exponential backoff: 2, 4, 8, 16, 32, 64, 128, 256, 512, 600 (cap)
-        base_delay = min(2 ** attempt, 600)
+        base_delay = min(2**attempt, 600)
         # Add ±30% jitter to prevent thundering herd
         jitter = random.uniform(0.7, 1.3)
         delay = base_delay * jitter
 
     # Default case - moderate exponential backoff
     else:
-        base_delay = min(2 ** attempt * 2, 300)  # Cap at 5 minutes
+        base_delay = min(2**attempt * 2, 300)  # Cap at 5 minutes
         jitter = random.uniform(0.8, 1.2)  # ±20% jitter
         delay = base_delay * jitter
 
@@ -334,10 +329,7 @@ def scheduled_process() -> int:
     try:
         return process_outbox_batch(session, limit=50)
     except Exception as e:
-        log_json(
-            stage="outbox.scheduled.error",
-            error=str(e)
-        )
+        log_json(stage="outbox.scheduled.error", error=str(e))
         raise
     finally:
         session.close()

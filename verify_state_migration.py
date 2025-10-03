@@ -2,12 +2,14 @@
 """Verify state column migration and job functionality."""
 
 import sys
-sys.path.insert(0, '.')
+
+sys.path.insert(0, ".")
 
 print("=== State Column Migration Verification ===\n")
 
 # Test 1: Check if migration file exists
 import os
+
 migration_path = "api/alembic/versions/012_add_signals_state.py"
 if os.path.exists(migration_path):
     print("✓ Migration file exists: " + migration_path)
@@ -41,7 +43,7 @@ print("     alembic -c /app/api/alembic.ini upgrade head")
 
 print("\n2. Check table structure:")
 print("   docker compose -f infra/docker-compose.yml exec -T db \\")
-print("     psql -U app -d app -c \"\\d+ signals\"")
+print('     psql -U app -d app -c "\\d+ signals"')
 
 print("\n3. Run verification job:")
 print("   docker compose -f infra/docker-compose.yml exec -T worker bash -lc '")

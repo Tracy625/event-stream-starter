@@ -11,16 +11,16 @@ Rules:
 - Use EVENT_KEY_VERSION=v2 during this job to include chain dimension
 """
 
-import os
 import json
+import os
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text as sa_text
 
-from worker.app import app
-from api.database import with_db
 from api.core.metrics_store import log_json
+from api.database import with_db
+from worker.app import app
 
 
 def _detect_chain_from_urls(urls: List[str], text: str = "") -> Optional[str]:
@@ -50,7 +50,9 @@ def _detect_chain_from_urls(urls: List[str], text: str = "") -> Optional[str]:
     return None
 
 
-def _build_x_evidence(urls_field: Any, author: Optional[str], text: Optional[str], ts: datetime) -> Dict[str, Any]:
+def _build_x_evidence(
+    urls_field: Any, author: Optional[str], text: Optional[str], ts: datetime
+) -> Dict[str, Any]:
     """Build minimal x_data evidence payload for events.upsert_event()"""
     tweet_id = None
     urls: List[str] = []
@@ -72,7 +74,17 @@ def _build_x_evidence(urls_field: Any, author: Optional[str], text: Optional[str
         ev["url"] = u
         # evidence strength grading
         ul = (u or "").lower()
-        if any(x in ul for x in ("etherscan.io", "bscscan.com", "arbiscan.io", "optimistic.etherscan.io", "basescan.org", "solscan.io")):
+        if any(
+            x in ul
+            for x in (
+                "etherscan.io",
+                "bscscan.com",
+                "arbiscan.io",
+                "optimistic.etherscan.io",
+                "basescan.org",
+                "solscan.io",
+            )
+        ):
             ev["strength"] = "strong"
         elif any(x in ul for x in ("dexscreener.com", "geckoterminal.com")):
             ev["strength"] = "medium"
@@ -87,15 +99,18 @@ def _build_x_evidence(urls_field: Any, author: Optional[str], text: Optional[str
 
 def _with_event_key_v2():
     """Context manager to temporarily set EVENT_KEY_VERSION=v2 for this job."""
+
     class _Ctx:
         def __enter__(self):
             self.prev = os.environ.get("EVENT_KEY_VERSION")
             os.environ["EVENT_KEY_VERSION"] = "v2"
+
         def __exit__(self, exc_type, exc, tb):
             if self.prev is None:
                 os.environ.pop("EVENT_KEY_VERSION", None)
             else:
                 os.environ["EVENT_KEY_VERSION"] = self.prev
+
     return _Ctx()
 
 
@@ -107,8 +122,10 @@ def run_once(limit: int = 1000) -> Dict[str, int]:
 
     with with_db() as db, _with_event_key_v2():
         # Fetch candidates from raw_posts
-        rows = db.execute(sa_text(
-            """
+        rows = (
+            db.execute(
+                sa_text(
+                    """
             SELECT id, author, text, ts, urls, token_ca, symbol
               FROM raw_posts
              WHERE source = 'x'
@@ -117,7 +134,12 @@ def run_once(limit: int = 1000) -> Dict[str, int]:
              ORDER BY ts DESC
              LIMIT :limit
             """
-        ), {"cutoff": cutoff, "limit": limit}).mappings().fetchall()
+                ),
+                {"cutoff": cutoff, "limit": limit},
+            )
+            .mappings()
+            .fetchall()
+        )
 
         stats["scanned"] = len(rows)
 
@@ -150,14 +172,23 @@ def run_once(limit: int = 1000) -> Dict[str, int]:
                 if chain:
                     post["chain_id"] = chain  # v2 identity uses this dimension
 
-                x_data = _build_x_evidence(urls_field, r.get("author"), r.get("text"), r.get("ts"))
+                x_data = _build_x_evidence(
+                    urls_field, r.get("author"), r.get("text"), r.get("ts")
+                )
 
                 # Use high-level API to insert/merge
                 try:
                     from api.events import upsert_event as upsert
+
                     res = upsert(post, x_data=x_data)
                     stats["upserted"] += 1
-                    log_json(stage="events.compact.upsert", event_key=res.get("event_key"), chain=chain, symbol=symbol, has_ca=bool(token_ca))
+                    log_json(
+                        stage="events.compact.upsert",
+                        event_key=res.get("event_key"),
+                        chain=chain,
+                        symbol=symbol,
+                        has_ca=bool(token_ca),
+                    )
                 except Exception as e:
                     stats["errors"] += 1
                     log_json(stage="events.compact.error", error=str(e)[:200])

@@ -4,14 +4,14 @@ This job identifies events that have topic_hash but no corresponding signal entr
 """
 
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text as sa_text
 from sqlalchemy.exc import SQLAlchemyError
 
-from worker.app import app
-from api.database import build_engine_from_env, get_sessionmaker
 from api.core.metrics_store import log_json
+from api.database import build_engine_from_env, get_sessionmaker
+from worker.app import app
 
 
 def get_db_session():
@@ -28,6 +28,7 @@ def scan_topic_signals():
     Creates new signal entries for topic-based events.
     """
     import time
+
     start_time_perf = time.perf_counter()
 
     batch_size = int(os.getenv("TOPIC_SIGNAL_BATCH_SIZE", "100"))
@@ -39,7 +40,7 @@ def scan_topic_signals():
     log_json(
         stage="topic.signal.scan.start",
         batch_size=batch_size,
-        window_hours=scan_window_hours
+        window_hours=scan_window_hours,
     )
 
     created_count = 0
@@ -52,7 +53,8 @@ def scan_topic_signals():
     try:
         # Find events with topic data but no topic-type signal
         # Note: LEFT JOIN with market_type filter to only check for topic signals
-        query = sa_text("""
+        query = sa_text(
+            """
             SELECT
                 e.event_key,
                 e.topic_hash as topic_id,
@@ -68,17 +70,20 @@ def scan_topic_signals():
               AND s.id IS NULL
             ORDER BY e.last_ts DESC
             LIMIT :batch_size
-        """)
+        """
+        )
 
-        results = session.execute(query, {
-            "start_time": start_time,
-            "batch_size": batch_size
-        }).mappings().fetchall()
+        results = (
+            session.execute(query, {"start_time": start_time, "batch_size": batch_size})
+            .mappings()
+            .fetchall()
+        )
 
         for row in results:
             try:
                 # First check if any signal exists for this event_key
-                check_query = sa_text("""
+                check_query = sa_text(
+                    """
                     SELECT id, type, market_type
                       FROM signals
                      WHERE event_key = :event_key
@@ -88,16 +93,22 @@ def scan_topic_signals():
                                 ELSE 2
                               END
                      LIMIT 1
-                """)
+                """
+                )
 
-                existing = session.execute(check_query, {
-                    "event_key": row["event_key"]
-                }).mappings().fetchone()
+                existing = (
+                    session.execute(check_query, {"event_key": row["event_key"]})
+                    .mappings()
+                    .fetchone()
+                )
 
                 if existing:
                     # Update existing row (prefer true type='topic'; fallback market_type='topic')
-                    if (existing.get("type") == 'topic') or (existing.get("market_type") == 'topic'):
-                        update_query = sa_text("""
+                    if (existing.get("type") == "topic") or (
+                        existing.get("market_type") == "topic"
+                    ):
+                        update_query = sa_text(
+                            """
                             UPDATE signals SET
                                 type = COALESCE(type, 'topic'),
                                 topic_id = :topic_id,
@@ -105,15 +116,23 @@ def scan_topic_signals():
                                 topic_confidence = :topic_confidence,
                                 ts = :ts
                             WHERE id = :id
-                        """)
+                        """
+                        )
 
-                        result = session.execute(update_query, {
-                            "id": existing["id"],
-                            "topic_id": row["topic_id"],
-                            "topic_entities": row["topic_entities"],
-                            "topic_confidence": float(row["topic_confidence"]) if row["topic_confidence"] else 0.0,
-                            "ts": row["last_ts"]
-                        })
+                        result = session.execute(
+                            update_query,
+                            {
+                                "id": existing["id"],
+                                "topic_id": row["topic_id"],
+                                "topic_entities": row["topic_entities"],
+                                "topic_confidence": (
+                                    float(row["topic_confidence"])
+                                    if row["topic_confidence"]
+                                    else 0.0
+                                ),
+                                "ts": row["last_ts"],
+                            },
+                        )
 
                         if result.rowcount > 0:
                             updated_count += 1
@@ -123,11 +142,13 @@ def scan_topic_signals():
                         log_json(
                             stage="topic.signal.scan.skip_non_topic",
                             event_key=row["event_key"],
-                            existing_type=existing.get("type") or existing.get("market_type")
+                            existing_type=existing.get("type")
+                            or existing.get("market_type"),
                         )
                 else:
                     # Insert new topic signal
-                    insert_query = sa_text("""
+                    insert_query = sa_text(
+                        """
                         INSERT INTO signals (
                             event_key,
                             type,
@@ -152,15 +173,25 @@ def scan_topic_signals():
                             topic_entities = EXCLUDED.topic_entities,
                             topic_confidence = EXCLUDED.topic_confidence,
                             ts = EXCLUDED.ts
-                    """)
+                    """
+                    )
 
-                    result = session.execute(insert_query, {
-                        "event_key": row["event_key"],
-                        "topic_id": row["topic_id"],
-                        "topic_entities": row["topic_entities"] if row["topic_entities"] else None,
-                        "topic_confidence": float(row["topic_confidence"]) if row["topic_confidence"] else 0.0,
-                        "ts": row["last_ts"]
-                    })
+                    result = session.execute(
+                        insert_query,
+                        {
+                            "event_key": row["event_key"],
+                            "topic_id": row["topic_id"],
+                            "topic_entities": (
+                                row["topic_entities"] if row["topic_entities"] else None
+                            ),
+                            "topic_confidence": (
+                                float(row["topic_confidence"])
+                                if row["topic_confidence"]
+                                else 0.0
+                            ),
+                            "ts": row["last_ts"],
+                        },
+                    )
 
                     if result.rowcount > 0:
                         created_count += 1
@@ -170,7 +201,7 @@ def scan_topic_signals():
                 log_json(
                     stage="topic.signal.scan.error",
                     event_key=row["event_key"],
-                    error=str(e)
+                    error=str(e),
                 )
 
         session.commit()
@@ -181,7 +212,7 @@ def scan_topic_signals():
             updated=updated_count,
             skipped_non_topic=skipped_non_topic,
             errors=error_count,
-            total=len(results)
+            total=len(results),
         )
 
         # Log execution time
@@ -194,23 +225,17 @@ def scan_topic_signals():
             "updated": updated_count,
             "skipped_non_topic": skipped_non_topic,
             "errors": error_count,
-            "total": len(results)
+            "total": len(results),
         }
 
     except SQLAlchemyError as e:
         session.rollback()
-        log_json(
-            stage="topic.signal.scan.failed",
-            error=str(e)
-        )
+        log_json(stage="topic.signal.scan.failed", error=str(e))
 
         # Log execution time even on failure
         elapsed_ms = int((time.perf_counter() - start_time_perf) * 1000)
         log_json(stage="topic.signal.scan.timing", elapsed_ms=elapsed_ms)
 
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
     finally:
         session.close()

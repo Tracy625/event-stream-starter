@@ -1,7 +1,7 @@
 import pytest
 
 from api.adapters.x_apify import map_apify_tweet, map_apify_user
-from api.clients.x_client import XClient, MultiSourceXClient
+from api.clients.x_client import MultiSourceXClient, XClient
 
 
 def test_map_apify_tweet_basic():
@@ -33,22 +33,28 @@ def test_map_apify_user_basic():
 class _FailClient(XClient):
     def fetch_user_tweets(self, handle: str, since_id=None):
         raise RuntimeError("fail")
+
     def fetch_user_profile(self, handle: str):
         return None
 
 
 class _OkClient(XClient):
     def fetch_user_tweets(self, handle: str, since_id=None):
-        return [{"id": "1", "author": handle, "text": "ok", "created_at": "", "urls": []}]
+        return [
+            {"id": "1", "author": handle, "text": "ok", "created_at": "", "urls": []}
+        ]
+
     def fetch_user_profile(self, handle: str):
         return {"handle": handle, "avatar_url": "", "ts": ""}
 
 
 def test_multisource_failover(monkeypatch):
     from api import clients as pkg
+
     # Patch factory to return our stubs for order [graphql, apify]
     def fake_get_x_client(name: str):
         return _FailClient() if name == "graphql" else _OkClient()
+
     monkeypatch.setattr(pkg.x_client, "get_x_client", fake_get_x_client)
 
     ms = MultiSourceXClient(["graphql", "apify"])

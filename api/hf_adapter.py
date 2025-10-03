@@ -17,6 +17,7 @@ def load_hf_model():
     global _client
     if _client is None:
         from api.services.hf_client import HfClient
+
         _client = HfClient()
     # Return dummy values for compatibility (not actually used in analyze_hf)
     return None, None, None
@@ -25,14 +26,15 @@ def load_hf_model():
 def analyze_hf(text: str) -> Tuple[str, float]:
     """
     Analyze sentiment using HuggingFace model.
-    
+
     Returns:
         (label, score) where label in {"pos", "neu", "neg"} and score in [-1, 1]
     """
     global _client
     if _client is None:
         from api.services.hf_client import HfClient
+
         _client = HfClient()
-    
+
     result = _client.predict_sentiment_one(text)
     return result["label"], result["score"]

@@ -6,10 +6,10 @@ Usage:
     python api/scripts/test_hotreload.py
 """
 
+import hashlib
 import os
 import sys
 import time
-import hashlib
 from pathlib import Path
 
 # Add api directory to path

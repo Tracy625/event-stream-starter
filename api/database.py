@@ -7,22 +7,23 @@ Provides factory functions for SQLAlchemy engine and session creation.
 import os
 from contextlib import contextmanager
 from typing import Generator, Optional
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 
 def build_engine_from_env() -> Engine:
     """
     Build SQLAlchemy engine from POSTGRES_URL environment variable.
-    
+
     Returns:
         Configured SQLAlchemy Engine with connection pooling
     """
     postgres_url = os.getenv("POSTGRES_URL")
     if not postgres_url:
         raise ValueError("POSTGRES_URL environment variable not set")
-    
+
     # Optional pool and timeout tuning via env
     pool_size = os.getenv("SQLALCHEMY_POOL_SIZE")
     max_overflow = os.getenv("SQLALCHEMY_MAX_OVERFLOW")
@@ -69,17 +70,17 @@ def build_engine_from_env() -> Engine:
         create_kwargs["connect_args"] = connect_args
 
     engine = create_engine(postgres_url, **create_kwargs)
-    
+
     return engine
 
 
 def get_sessionmaker(engine: Engine) -> sessionmaker:
     """
     Create sessionmaker bound to the given engine.
-    
+
     Args:
         engine: SQLAlchemy Engine instance
-    
+
     Returns:
         Configured sessionmaker class
     """
@@ -87,7 +88,7 @@ def get_sessionmaker(engine: Engine) -> sessionmaker:
         bind=engine,
         expire_on_commit=False,  # Don't expire objects after commit
     )
-    
+
     return Session
 
 
@@ -107,22 +108,22 @@ def get_session_local() -> sessionmaker:
     Provides compatibility with both DATABASE_URL and POSTGRES_URL env vars.
     """
     global _SessionLocal, _engine
-    
+
     if _SessionLocal is not None:
         return _SessionLocal
-    
+
     # Try to use existing SessionLocal if available in globals
     try:
         return globals()["SessionLocal"]  # type: ignore
     except KeyError:
         pass
-    
+
     if DATABASE_URL:
         if _engine is None:
             _engine = create_engine(DATABASE_URL, pool_pre_ping=True)
         _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
         return _SessionLocal
-    
+
     # Fallback to using build_engine_from_env if available
     try:
         _engine = build_engine_from_env()
@@ -130,15 +131,17 @@ def get_session_local() -> sessionmaker:
         return _SessionLocal
     except ValueError:
         pass
-    
-    raise RuntimeError("Neither DATABASE_URL nor POSTGRES_URL is set and no existing SessionLocal found")
+
+    raise RuntimeError(
+        "Neither DATABASE_URL nor POSTGRES_URL is set and no existing SessionLocal found"
+    )
 
 
 def get_db() -> Generator[Session, None, None]:
     """
     FastAPI dependency injection DB session generator.
     Usage: Depends(get_db)
-    
+
     Yields:
         Database session that auto-closes after use
     """
@@ -155,7 +158,7 @@ def with_db() -> Generator[Session, None, None]:
     """
     Context manager for database sessions.
     Usage: with with_db() as db: ...
-    
+
     Yields:
         Database session that auto-closes after use
     """

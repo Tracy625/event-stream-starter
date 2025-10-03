@@ -6,14 +6,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.core import metrics
-from api.db.models.push_outbox import PushOutbox, PushOutboxDLQ, OutboxStatus
+from api.db.models.push_outbox import OutboxStatus, PushOutbox, PushOutboxDLQ
 from worker.jobs.outbox_dlq_recover import recover_batch
-
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    pytest.skip("DATABASE_URL is required for DLQ recovery tests", allow_module_level=True)
+    pytest.skip(
+        "DATABASE_URL is required for DLQ recovery tests", allow_module_level=True
+    )
 engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 

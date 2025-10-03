@@ -15,16 +15,16 @@ Usage:
     log_json("event", status="success", count=42)
 """
 
-import time
-import json
 import functools
+import json
+import time
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
-from contextvars import ContextVar
 
 # Context variables for request tracing
-trace_id_var: ContextVar[Optional[str]] = ContextVar('trace_id', default=None)
-request_id_var: ContextVar[Optional[str]] = ContextVar('request_id', default=None)
+trace_id_var: ContextVar[Optional[str]] = ContextVar("trace_id", default=None)
+request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
 
 
 def get_trace_id() -> Optional[str]:
@@ -73,7 +73,7 @@ def log_json(stage: str, **kv) -> None:
         "request_id": kv.pop("request_id", None) or get_request_id() or "no-request",
         "level": kv.pop("level", "info"),
         "stage": stage,
-        "message": kv.pop("message", f"Event: {stage}")
+        "message": kv.pop("message", f"Event: {stage}"),
     }
 
     # Add provided key-value pairs, skipping None values
@@ -89,62 +89,54 @@ def log_json(stage: str, **kv) -> None:
 def timeit(stage: str, backend: Optional[str] = None) -> Callable:
     """
     Decorator to measure function execution time in milliseconds.
-    
+
     Args:
         stage: Stage name for logging
         backend: Optional backend identifier (defaults to "n/a")
-    
+
     Logs JSON with fields:
         - stage: Provided stage name
         - backend: Backend identifier or "n/a"
         - ms: Execution time in milliseconds (integer)
         - ok: true on success, false on exception
         - ts_iso: ISO8601 timestamp in UTC
-    
+
     Example:
         @timeit("filter", backend="rules")
         def filter_text(text: str) -> bool:
             return "crypto" in text.lower()
     """
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             # Start timing
             t0 = time.perf_counter()
-            
+
             try:
                 # Execute wrapped function
                 result = func(*args, **kwargs)
-                
+
                 # Calculate elapsed time in milliseconds
                 t1 = time.perf_counter()
                 elapsed_ms = int(round((t1 - t0) * 1000))
-                
+
                 # Log success
-                log_json(
-                    stage=stage,
-                    backend=backend or "n/a",
-                    ms=elapsed_ms,
-                    ok=True
-                )
-                
+                log_json(stage=stage, backend=backend or "n/a", ms=elapsed_ms, ok=True)
+
                 return result
-                
+
             except Exception as e:
                 # Calculate elapsed time on failure
                 t1 = time.perf_counter()
                 elapsed_ms = int(round((t1 - t0) * 1000))
-                
+
                 # Log failure
-                log_json(
-                    stage=stage,
-                    backend=backend or "n/a",
-                    ms=elapsed_ms,
-                    ok=False
-                )
-                
+                log_json(stage=stage, backend=backend or "n/a", ms=elapsed_ms, ok=False)
+
                 # Re-raise original exception
                 raise
-        
+
         return wrapper
+
     return decorator

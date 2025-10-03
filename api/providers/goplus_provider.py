@@ -1,19 +1,21 @@
 """GoPlus security provider with caching and degradation"""
-import os
-import json
-import time
+
 import hashlib
+import json
+import os
 import random
-from typing import Optional, Dict, Any, Tuple
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from api.schemas.security import SecurityResult
+from typing import Any, Dict, Optional, Tuple
+
 from api.core.metrics_store import log_json
+from api.schemas.security import SecurityResult
 
 
 class GoPlusProvider:
     """Business aggregation layer for GoPlus security checks"""
-    
+
     def __init__(self):
         # Load config from environment
         self.backend = os.getenv("SECURITY_BACKEND", "goplus")
@@ -21,38 +23,40 @@ class GoPlusProvider:
         self.db_ttl_s = int(os.getenv("SECURITY_DB_TTL_S", "86400"))
         self.allow_stale = os.getenv("SECURITY_ALLOW_STALE", "true").lower() == "true"
         self.stale_max_s = int(os.getenv("SECURITY_STALE_MAX_S", "172800"))
-        
+
         # Risk thresholds
         self.risk_tax_red = float(os.getenv("RISK_TAX_RED", "10"))
         self.risk_lp_yellow_days = int(os.getenv("RISK_LP_YELLOW_DAYS", "30"))
         self.honeypot_red = os.getenv("HONEYPOT_RED", "true").lower() == "true"
         self.risk_min_confidence = float(os.getenv("RISK_MIN_CONFIDENCE", "0.6"))
-        
+
         # In-memory cache (simple dict for now)
         self._memory_cache = {}
-        
+
         # Lazy init for dependencies
         self._client = None
         self._redis = None
         self._db_engine = None
         self._rules = None
-    
+
     def _get_client(self):
         """Lazy load GoPlus client; never raise on init failure"""
         if self._client is None and self.backend == "goplus":
             try:
                 from api.clients.goplus import GoPlusClient, GoPlusClientError
+
                 self._client = GoPlusClient()
             except Exception as e:  # include GoPlusClientError
                 log_json(stage="goplus.error", error=str(e))
                 self._client = None
         return self._client
-    
+
     def _get_redis(self):
         """Lazy load Redis connection"""
         if self._redis is None:
             try:
                 import redis
+
                 redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
                 self._redis = redis.from_url(redis_url, decode_responses=True)
                 # Test connection
@@ -61,13 +65,16 @@ class GoPlusProvider:
                 log_json(stage="goplus.cache.redis_unavailable", error=str(e))
                 self._redis = None
         return self._redis
-    
+
     def _get_db(self):
         """Lazy load database connection (uses POSTGRES_URL)"""
         if self._db_engine is None:
             try:
                 from sqlalchemy import create_engine
-                dsn = os.getenv("POSTGRES_URL") or os.getenv("DATABASE_URL", "postgresql://app:app@db:5432/app")
+
+                dsn = os.getenv("POSTGRES_URL") or os.getenv(
+                    "DATABASE_URL", "postgresql://app:app@db:5432/app"
+                )
                 # normalize driver prefix if provided as postgresql+psycopg2
                 dsn = dsn.replace("postgresql+psycopg2://", "postgresql://")
                 self._db_engine = create_engine(dsn)
@@ -75,20 +82,23 @@ class GoPlusProvider:
                 log_json(stage="goplus.cache.db_unavailable", error=str(e))
                 self._db_engine = None
         return self._db_engine
-    
+
     def _load_rules(self) -> Dict[str, Any]:
         """Load risk rules from registry with hot reload support"""
         if self._rules is not None:
             return self._rules
         try:
             from api.config.hotreload import get_registry
+
             registry = get_registry()
             # Check for stale configs and reload if needed
             registry.reload_if_stale()
             # Get risk_rules namespace
             self._rules = registry.get_ns("risk_rules")
             if not self._rules:
-                log_json(stage="goplus.degrade", reason="rules_missing", backend="rules")
+                log_json(
+                    stage="goplus.degrade", reason="rules_missing", backend="rules"
+                )
                 self._rules = {}
         except Exception as e:
             log_json(stage="goplus.rules.load_error", error=str(e))
@@ -109,25 +119,27 @@ class GoPlusProvider:
                 cache=True,
                 stale=False,
                 notes=data.get("notes", ["cached rules result"]),
-                raw_response=None  # Add this to ensure raw_response attribute exists
+                raw_response=None,  # Add this to ensure raw_response attribute exists
             )
         # default path: parse API-shaped json
         return self._evaluate_risk(data)
-    
+
     def _make_cache_key(self, endpoint: str, chain_id: Optional[str], key: str) -> str:
         """Generate cache key"""
         return f"goplus:{endpoint}:{chain_id or '-'}:{key}"
-    
+
     def _add_ttl_jitter(self, ttl_s: int) -> int:
         """Add 0-10% jitter to TTL to prevent cache stampede"""
         jitter = random.uniform(0, 0.1) * ttl_s
         return int(ttl_s + jitter)
-    
-    def get_from_cache(self, endpoint: str, chain_id: Optional[str], key: str) -> Optional[Dict[str, Any]]:
+
+    def get_from_cache(
+        self, endpoint: str, chain_id: Optional[str], key: str
+    ) -> Optional[Dict[str, Any]]:
         """Get from multi-level cache"""
         cache_key = self._make_cache_key(endpoint, chain_id, key)
         now = time.time()
-        
+
         # 1. Check memory cache
         if cache_key in self._memory_cache:
             entry = self._memory_cache[cache_key]
@@ -137,7 +149,7 @@ class GoPlusProvider:
             elif self.allow_stale and (now - entry["expires_at"]) < self.stale_max_s:
                 log_json(stage="goplus.cache.hit", source="memory", stale=True)
                 return {"data": entry["data"], "stale": True}
-        
+
         # 2. Check Redis cache
         redis_client = self._get_redis()
         if redis_client:
@@ -150,20 +162,25 @@ class GoPlusProvider:
                         # Write back to memory
                         self._memory_cache[cache_key] = entry
                         return {"data": entry["data"], "stale": False}
-                    elif self.allow_stale and (now - entry["expires_at"]) < self.stale_max_s:
+                    elif (
+                        self.allow_stale
+                        and (now - entry["expires_at"]) < self.stale_max_s
+                    ):
                         log_json(stage="goplus.cache.hit", source="redis", stale=True)
                         return {"data": entry["data"], "stale": True}
             except Exception as e:
                 log_json(stage="goplus.cache.redis_error", error=str(e))
-        
+
         # 3. Check DB cache
         db_engine = self._get_db()
         if db_engine:
             try:
                 from sqlalchemy import text as sa_text
+
                 with db_engine.connect() as conn:
                     result = conn.execute(
-                        sa_text("""
+                        sa_text(
+                            """
                             SELECT resp_json, expires_at 
                             FROM goplus_cache 
                             WHERE endpoint = :endpoint 
@@ -171,10 +188,11 @@ class GoPlusProvider:
                             AND key = :key
                             ORDER BY fetched_at DESC
                             LIMIT 1
-                        """),
-                        {"endpoint": endpoint, "chain_id": chain_id, "key": key}
+                        """
+                        ),
+                        {"endpoint": endpoint, "chain_id": chain_id, "key": key},
                     ).fetchone()
-                    
+
                     if result:
                         expires_at = result[1].timestamp()
                         if expires_at > now:
@@ -192,23 +210,31 @@ class GoPlusProvider:
                             return {"data": result[0], "stale": True}
             except Exception as e:
                 log_json(stage="goplus.cache.db_error", error=str(e))
-        
+
         log_json(stage="goplus.cache.miss", next="api")
         return None
-    
-    def save_to_cache(self, endpoint: str, chain_id: Optional[str], key: str, data: Dict[str, Any], status: str = "success", ttl_s: Optional[int] = None) -> None:
+
+    def save_to_cache(
+        self,
+        endpoint: str,
+        chain_id: Optional[str],
+        key: str,
+        data: Dict[str, Any],
+        status: str = "success",
+        ttl_s: Optional[int] = None,
+    ) -> None:
         """Save to multi-level cache"""
         if ttl_s is None:
             ttl_s = self.cache_ttl_s if status == "success" else 60
-        
+
         ttl_s = self._add_ttl_jitter(ttl_s)
         expires_at = time.time() + ttl_s
         cache_key = self._make_cache_key(endpoint, chain_id, key)
         entry = {"data": data, "expires_at": expires_at}
-        
+
         # 1. Save to memory
         self._memory_cache[cache_key] = entry
-        
+
         # 2. Save to Redis
         redis_client = self._get_redis()
         if redis_client:
@@ -216,13 +242,16 @@ class GoPlusProvider:
                 redis_client.setex(cache_key, ttl_s, json.dumps(entry))
             except Exception as e:
                 log_json(stage="goplus.cache.redis_save_error", error=str(e))
-        
+
         # 3. Save to DB
         db_engine = self._get_db()
         if db_engine:
             try:
                 from sqlalchemy import text as sa_text
-                payload_hash = hashlib.md5(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+                payload_hash = hashlib.md5(
+                    json.dumps(data, sort_keys=True).encode()
+                ).hexdigest()
                 with db_engine.begin() as conn:
                     conn.execute(
                         sa_text(
@@ -239,12 +268,14 @@ class GoPlusProvider:
                             "resp_json": json.dumps(data),
                             "status": status,
                             "fetched_at": datetime.now(timezone.utc),
-                            "expires_at": datetime.fromtimestamp(expires_at, timezone.utc),
+                            "expires_at": datetime.fromtimestamp(
+                                expires_at, timezone.utc
+                            ),
                         },
                     )
             except Exception as e:
                 log_json(stage="goplus.cache.db_save_error", error=str(e))
-    
+
     def _evaluate_risk(self, data: Dict[str, Any]) -> SecurityResult:
         """Evaluate risk from raw data (robust against None / wrong shapes)."""
         # ---- Normalize input to avoid attribute errors ----
@@ -346,27 +377,27 @@ class GoPlusProvider:
             notes=notes,
             raw_response=safe_data,
         )
-    
+
     def _apply_rules(self, address: str) -> SecurityResult:
         """Apply local rules for degraded mode"""
         rules = self._load_rules()
         risk_label = "unknown"
         notes = ["evaluated by local rules"]
-        
+
         # Check blacklist
         blacklist = rules.get("blacklist", [])
         if address.lower() in [b.lower() for b in blacklist]:
             risk_label = "red"
             notes.append("address blacklisted")
-        
+
         # Check whitelist
         whitelist = rules.get("whitelist", [])
         if address.lower() in [w.lower() for w in whitelist]:
             risk_label = "green"
             notes.append("address whitelisted")
-        
+
         log_json(stage="goplus.risk", label=risk_label, source="rules")
-        
+
         return SecurityResult(
             risk_label=risk_label,
             buy_tax=None,
@@ -378,9 +409,9 @@ class GoPlusProvider:
             cache=False,
             stale=False,
             notes=notes,
-            raw_response=None
+            raw_response=None,
         )
-    
+
     def check_token(self, chain_id: str, address: str) -> SecurityResult:
         """Check token security"""
         # Force rules mode if configured
@@ -405,9 +436,16 @@ class GoPlusProvider:
                 "blacklist_flags": getattr(res, "blacklist_flags", []),
                 "notes": res.notes,
             }
-            self.save_to_cache("token_security", chain_id, address, cache_payload, "success", self.cache_ttl_s)
+            self.save_to_cache(
+                "token_security",
+                chain_id,
+                address,
+                cache_payload,
+                "success",
+                self.cache_ttl_s,
+            )
             return res
-        
+
         # Check cache
         cached = self.get_from_cache("token_security", chain_id, address)
         if cached:
@@ -415,33 +453,37 @@ class GoPlusProvider:
             result.cache = True
             result.stale = cached.get("stale", False)
             return result
-        
+
         # Call API
         try:
             client = self._get_client()
             if not client:
                 log_json(stage="goplus.degrade", reason="no_client", backend="rules")
                 return self._apply_rules(address)
-            
+
             data = client.token_security(chain_id, address)
-            
+
             # Save to cache
-            self.save_to_cache("token_security", chain_id, address, data, "success", self.db_ttl_s)
-            
+            self.save_to_cache(
+                "token_security", chain_id, address, data, "success", self.db_ttl_s
+            )
+
             # Evaluate risk
             result = self._evaluate_risk(data)
             log_json(stage="goplus.success", cache_hit=False, risk=result.risk_label)
             return result
-            
+
         except Exception as e:
             log_json(stage="goplus.error", error=str(e), degrade=True)
             log_json(stage="goplus.degrade", reason="api_error", backend="rules")
             return self._apply_rules(address)
-    
-    def check_approval(self, chain_id: str, address: str, type: str = "erc20") -> SecurityResult:
+
+    def check_approval(
+        self, chain_id: str, address: str, type: str = "erc20"
+    ) -> SecurityResult:
         """Check approval security"""
         cache_key = f"{address}:{type}"
-        
+
         if self.backend == "rules":
             log_json(stage="goplus.degrade", reason="backend_rules", backend="rules")
             # try cache first to satisfy acceptance without external deps
@@ -463,24 +505,38 @@ class GoPlusProvider:
                 "blacklist_flags": getattr(res, "blacklist_flags", []),
                 "notes": res.notes,
             }
-            self.save_to_cache("approval_security", chain_id, cache_key, cache_payload, "success", self.cache_ttl_s)
+            self.save_to_cache(
+                "approval_security",
+                chain_id,
+                cache_key,
+                cache_payload,
+                "success",
+                self.cache_ttl_s,
+            )
             return res
-        
+
         cached = self.get_from_cache("approval_security", chain_id, cache_key)
         if cached:
             result = self._result_from_cached_data(cached["data"])
             result.cache = True
             result.stale = cached.get("stale", False)
             return result
-        
+
         try:
             client = self._get_client()
             if not client:
                 log_json(stage="goplus.degrade", reason="no_client", backend="rules")
                 return self._apply_rules(address)
-            
+
             data = client.approval_security(chain_id, address, type=type)
-            self.save_to_cache("approval_security", chain_id, cache_key, data, "success", self.cache_ttl_s)
+            self.save_to_cache(
+                "approval_security",
+                chain_id,
+                cache_key,
+                data,
+                "success",
+                self.cache_ttl_s,
+            )
             result = self._evaluate_risk(data)
             log_json(stage="goplus.success", cache_hit=False, risk=result.risk_label)
             return result
@@ -488,7 +544,7 @@ class GoPlusProvider:
             log_json(stage="goplus.error", error=str(e), degrade=True)
             log_json(stage="goplus.degrade", reason="api_error", backend="rules")
             return self._apply_rules(address)
-    
+
     def check_address(self, address: str) -> SecurityResult:
         """Check address security"""
         # Force rules mode if configured
@@ -511,9 +567,16 @@ class GoPlusProvider:
                 "blacklist_flags": getattr(res, "blacklist_flags", []),
                 "notes": res.notes,
             }
-            self.save_to_cache("address_security", None, address, cache_payload, "success", self.cache_ttl_s)
+            self.save_to_cache(
+                "address_security",
+                None,
+                address,
+                cache_payload,
+                "success",
+                self.cache_ttl_s,
+            )
             return res
-        
+
         # Check cache
         cached = self.get_from_cache("address_security", None, address)
         if cached:
@@ -521,24 +584,26 @@ class GoPlusProvider:
             result.cache = True
             result.stale = cached.get("stale", False)
             return result
-        
+
         # Call API
         try:
             client = self._get_client()
             if not client:
                 log_json(stage="goplus.degrade", reason="no_client", backend="rules")
                 return self._apply_rules(address)
-            
+
             data = client.address_security(address)
-            
+
             # Save to cache
-            self.save_to_cache("address_security", None, address, data, "success", self.cache_ttl_s)
-            
+            self.save_to_cache(
+                "address_security", None, address, data, "success", self.cache_ttl_s
+            )
+
             # Evaluate risk
             result = self._evaluate_risk(data)
             log_json(stage="goplus.success", cache_hit=False, risk=result.risk_label)
             return result
-            
+
         except Exception as e:
             log_json(stage="goplus.error", error=str(e), degrade=True)
             log_json(stage="goplus.degrade", reason="api_error", backend="rules")

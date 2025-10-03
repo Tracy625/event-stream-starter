@@ -12,16 +12,16 @@ On trigger: emit a 'secondary' card (degraded), with cooldown.
 """
 
 import os
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict
 
 from sqlalchemy import text as sa_text
 
-from worker.app import app
-from api.database import with_db
-from api.core.metrics_store import log_json
-from api.providers.dex_provider import DexProvider
 from api.cache import get_redis_client
+from api.core.metrics_store import log_json
+from api.database import with_db
+from api.providers.dex_provider import DexProvider
+from worker.app import app
 from worker.jobs.push_cards import process_card as push_card_task
 
 
@@ -46,8 +46,10 @@ def run_once(limit: int = 200) -> Dict[str, int]:
 
     with with_db() as db:
         # Select recent events with CA (from ca_hunter or upstream) in the last 2h
-        rows = db.execute(sa_text(
-            """
+        rows = (
+            db.execute(
+                sa_text(
+                    """
             SELECT event_key, token_ca, last_ts
               FROM events
              WHERE token_ca IS NOT NULL
@@ -55,7 +57,12 @@ def run_once(limit: int = 200) -> Dict[str, int]:
              ORDER BY last_ts DESC
              LIMIT :limit
             """
-        ), {"limit": limit}).mappings().fetchall()
+                ),
+                {"limit": limit},
+            )
+            .mappings()
+            .fetchall()
+        )
         stats["scanned"] = len(rows)
 
         for r in rows:
@@ -78,8 +85,20 @@ def run_once(limit: int = 200) -> Dict[str, int]:
                         lp = (snap or {}).get("liquidity_usd") or 0.0
                         txns = (snap or {}).get("txns", {}) or {}
                         # Approximate window txns using h1 or h24 when window data unavailable
-                        txns_window = int(txns.get("h1", {}).get("buys", 0) + txns.get("h1", {}).get("sells", 0)) if window == 60 else int(txns.get("h1", {}).get("buys", 0) + txns.get("h1", {}).get("sells", 0))
-                        vol_window = float((snap or {}).get("volume_24h", 0)) * (window / 1440.0)
+                        txns_window = (
+                            int(
+                                txns.get("h1", {}).get("buys", 0)
+                                + txns.get("h1", {}).get("sells", 0)
+                            )
+                            if window == 60
+                            else int(
+                                txns.get("h1", {}).get("buys", 0)
+                                + txns.get("h1", {}).get("sells", 0)
+                            )
+                        )
+                        vol_window = float((snap or {}).get("volume_24h", 0)) * (
+                            window / 1440.0
+                        )
 
                         lp_min = lp_min_sol if ch == "sol" else lp_min_evm
                         conds = [txns_window >= txns_min, lp >= lp_min]
@@ -96,12 +115,24 @@ def run_once(limit: int = 200) -> Dict[str, int]:
                                 "states": {"degrade": True},
                                 "risk_note": f"代理触发：{window}m txns≥{txns_min}, LP≥{int(lp_min)}",
                             }
-                            channel_id = os.getenv("TELEGRAM_TOPIC_CHAT_ID") or os.getenv("TELEGRAM_SANDBOX_CHANNEL_ID") or os.getenv("TG_CHANNEL_ID")
+                            channel_id = (
+                                os.getenv("TELEGRAM_TOPIC_CHAT_ID")
+                                or os.getenv("TELEGRAM_SANDBOX_CHANNEL_ID")
+                                or os.getenv("TG_CHANNEL_ID")
+                            )
                             if channel_id:
-                                push_card_task.apply_async(args=[signal, str(channel_id)])
+                                push_card_task.apply_async(
+                                    args=[signal, str(channel_id)]
+                                )
                                 stats["triggered"] += 1
                                 triggered = True
-                                log_json(stage="secondary.proxy.trigger", event_key=ek, chain=ch, lp=lp, txns=txns_window)
+                                log_json(
+                                    stage="secondary.proxy.trigger",
+                                    event_key=ek,
+                                    chain=ch,
+                                    lp=lp,
+                                    txns=txns_window,
+                                )
                                 break
                     except Exception:
                         continue
@@ -118,4 +149,3 @@ def run_once(limit: int = 200) -> Dict[str, int]:
 @app.task(name="secondary.proxy_scan_5m")
 def scan_task():
     return run_once()
-

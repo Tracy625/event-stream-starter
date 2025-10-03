@@ -1,11 +1,12 @@
+import logging
 import os
 import re
-import logging
 from typing import List, Tuple
+
 try:
     import torch
-    from transformers import AutoTokenizer, AutoModel
-except Exception:  
+    from transformers import AutoModel, AutoTokenizer
+except Exception:
     torch = None
     AutoTokenizer = AutoModel = None
 LOGGER = logging.getLogger(__name__)
@@ -14,14 +15,45 @@ DEFAULT_MIN_LEN = int(os.getenv("KEYPHRASE_MIN_LEN", "2"))
 DEFAULT_DEDUP = os.getenv("KEYPHRASE_DEDUP", "1") == "1"
 FALLBACK_ON_EMPTY = os.getenv("KEYPHRASE_FALLBACK_ON_EMPTY", "1") == "1"
 KBIR_MODEL = os.getenv("KEYPHRASE_MODEL", "ml6team/keyphrase-extraction-kbir-inspec")
-ALPHA = float(os.getenv("KEYPHRASE_MMR_ALPHA", "0.65"))    
-MAX_NGRAM = int(os.getenv("KEYPHRASE_MAX_N", "3"))         
+ALPHA = float(os.getenv("KEYPHRASE_MMR_ALPHA", "0.65"))
+MAX_NGRAM = int(os.getenv("KEYPHRASE_MAX_N", "3"))
 DEVICE = "cuda" if (os.getenv("HF_DEVICE", "cpu") == "cuda") else "cpu"
 
 STOPWORDS = {
-    "a","an","the","and","or","for","to","of","on","in","with","at","by","is","are","was","were",
-    "this","that","it","its","as","be","from","now","open","new","claim","get","go","you","we",
+    "a",
+    "an",
+    "the",
+    "and",
+    "or",
+    "for",
+    "to",
+    "of",
+    "on",
+    "in",
+    "with",
+    "at",
+    "by",
+    "is",
+    "are",
+    "was",
+    "were",
+    "this",
+    "that",
+    "it",
+    "its",
+    "as",
+    "be",
+    "from",
+    "now",
+    "open",
+    "new",
+    "claim",
+    "get",
+    "go",
+    "you",
+    "we",
 }
+
 
 def extract_keyphrases(text: str) -> List[str]:
     backend = os.getenv("KEYPHRASE_BACKEND", "off")
@@ -29,15 +61,22 @@ def extract_keyphrases(text: str) -> List[str]:
         return _rules_extract(text)
 
     if backend == "kbir":
- 
+
         topk = 8 if len(text) < 64 else (DEFAULT_TOPK or 5)
         phrases = _kbir_extract(text, topk=topk)
-        phrases = _normalize_filter(phrases, min_len=DEFAULT_MIN_LEN, dedup=DEFAULT_DEDUP)
+        phrases = _normalize_filter(
+            phrases, min_len=DEFAULT_MIN_LEN, dedup=DEFAULT_DEDUP
+        )
         if not phrases and FALLBACK_ON_EMPTY:
-            LOGGER.info("keyphrases.downgrade", extra={"backend": "kbir", "reason": "empty_result", "downgrade": True})
+            LOGGER.info(
+                "keyphrases.downgrade",
+                extra={"backend": "kbir", "reason": "empty_result", "downgrade": True},
+            )
             return _rules_extract(text)
         return phrases
     return _rules_extract(text)
+
+
 def _rules_extract(text: str) -> List[str]:
     toks = re.findall(r"\$[A-Za-z0-9_]+|[A-Za-z]{2,}", text)
     base = [t.lower() for t in toks]
@@ -48,8 +87,11 @@ def _rules_extract(text: str) -> List[str]:
             continue
         seen.add(s)
         out.append(s)
-    return out[:DEFAULT_TOPK or 5]
+    return out[: DEFAULT_TOPK or 5]
+
+
 _KBIR_CACHE = {"tok": None, "model": None, "device": "cpu"}
+
 
 def _load_kbir():
     if torch is None or AutoTokenizer is None or AutoModel is None:
@@ -66,12 +108,16 @@ def _load_kbir():
         _KBIR_CACHE.update({"tok": tok, "model": mdl, "device": dev})
     return _KBIR_CACHE["tok"], _KBIR_CACHE["model"], _KBIR_CACHE["device"]
 
-def _mean_pool(last_hidden_state: "torch.Tensor", attention_mask: "torch.Tensor") -> "torch.Tensor":
+
+def _mean_pool(
+    last_hidden_state: "torch.Tensor", attention_mask: "torch.Tensor"
+) -> "torch.Tensor":
     mask = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
     masked = last_hidden_state * mask
     summed = masked.sum(dim=1)
     counts = mask.sum(dim=1).clamp(min=1e-9)
     return summed / counts
+
 
 def _gen_ngrams(tokens: List[str], max_n: int) -> List[Tuple[str, Tuple[int, int]]]:
     spans = []
@@ -84,6 +130,7 @@ def _gen_ngrams(tokens: List[str], max_n: int) -> List[Tuple[str, Tuple[int, int
             phrase = " ".join(tokens[i:j])
             spans.append((phrase, (i, j)))
     return spans
+
 
 def _kbir_extract(text: str, topk: int) -> List[str]:
     text = (text or "").strip()
@@ -106,15 +153,18 @@ def _kbir_extract(text: str, topk: int) -> List[str]:
 
         p_vecs = []
         for phrase in phrases:
-            pe = tok(phrase, return_tensors="pt", truncation=True, max_length=16).to(dev)
+            pe = tok(phrase, return_tensors="pt", truncation=True, max_length=16).to(
+                dev
+            )
             po = mdl(**pe)
             vec = _mean_pool(po.last_hidden_state, pe["attention_mask"])
             vec = torch.nn.functional.normalize(vec, dim=-1)
             p_vecs.append(vec)
 
-  
     sims = [float(torch.mm(v, doc_vec.T).squeeze().item()) for v in p_vecs]
-    idx_sorted = sorted(range(len(phrases)), key=lambda i: sims[i], reverse=True)[:max(50, topk)]
+    idx_sorted = sorted(range(len(phrases)), key=lambda i: sims[i], reverse=True)[
+        : max(50, topk)
+    ]
 
     if not idx_sorted:
         return []
@@ -137,7 +187,10 @@ def _kbir_extract(text: str, topk: int) -> List[str]:
 
     return [phrases[i] for i in selected]
 
-def _normalize_filter(cands: List[str], min_len: int = 2, dedup: bool = True) -> List[str]:
+
+def _normalize_filter(
+    cands: List[str], min_len: int = 2, dedup: bool = True
+) -> List[str]:
     out, seen = [], set()
     for c in cands:
         s = c.strip().lower()
@@ -149,4 +202,4 @@ def _normalize_filter(cands: List[str], min_len: int = 2, dedup: bool = True) ->
             continue
         seen.add(s)
         out.append(s)
-    return out[:DEFAULT_TOPK or 5]
+    return out[: DEFAULT_TOPK or 5]

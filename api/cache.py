@@ -12,60 +12,62 @@ Features:
 - Comprehensive metrics and structured logging
 """
 
-import hashlib
-import time
-import threading
-import os
 import functools
+import hashlib
+import os
 import random
-from typing import Any, Callable, Optional, Tuple, TypeVar, Union
+import threading
+import time
 from collections import defaultdict
+from typing import Any, Callable, Optional, Tuple, TypeVar, Union
 
 from api.core.metrics_store import log_json
 
 try:
     from prometheus_client import Counter
+
     from api.core.metrics import PROM_REGISTRY
 
     # Cache metrics - register to shared PROM_REGISTRY
     cache_hits_total = Counter(
-        'cache_hits_total',
-        'Total number of cache hits',
-        ['layer'],  # layer: local or redis
-        registry=PROM_REGISTRY
+        "cache_hits_total",
+        "Total number of cache hits",
+        ["layer"],  # layer: local or redis
+        registry=PROM_REGISTRY,
     )
 
     cache_misses_total = Counter(
-        'cache_misses_total',
-        'Total number of cache misses',
-        ['layer'],  # layer: local or redis
-        registry=PROM_REGISTRY
+        "cache_misses_total",
+        "Total number of cache misses",
+        ["layer"],  # layer: local or redis
+        registry=PROM_REGISTRY,
     )
 
     cache_fill_total = Counter(
-        'cache_fill_total',
-        'Total number of cache fills',
-        ['result'],  # result: success or error
-        registry=PROM_REGISTRY
+        "cache_fill_total",
+        "Total number of cache fills",
+        ["result"],  # result: success or error
+        registry=PROM_REGISTRY,
     )
 
     cache_degrade_count_total = Counter(
-        'cache_degrade_count_total',
-        'Total number of cache degradations',
-        ['cause'],  # cause: function_error, redis_error, double_fault
-        registry=PROM_REGISTRY
+        "cache_degrade_count_total",
+        "Total number of cache degradations",
+        ["cause"],  # cause: function_error, redis_error, double_fault
+        registry=PROM_REGISTRY,
     )
 
     cache_lock_contention_total = Counter(
-        'cache_lock_contention_total',
-        'Total number of cache lock contentions',
-        registry=PROM_REGISTRY
+        "cache_lock_contention_total",
+        "Total number of cache lock contentions",
+        registry=PROM_REGISTRY,
     )
 except ImportError:
     # Fallback to no-op metrics if prometheus_client not available
     class NoOpMetric:
         def labels(self, **kwargs):
             return self
+
         def inc(self, amount=1):
             pass
 
@@ -84,7 +86,7 @@ except ImportError:
 _redis_client = None
 _redis_lock = threading.Lock()
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 def get_redis_client() -> Optional["redis.Redis"]:
@@ -236,8 +238,7 @@ _lock_manager = CacheLockManager()
 
 
 def memoize_ttl(
-    seconds: int,
-    fallback: Any = None
+    seconds: int, fallback: Any = None
 ) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """
     Thread-safe in-process cache decorator with TTL expiration.
@@ -258,6 +259,7 @@ def memoize_ttl(
             # Expensive computation
             return {"sentiment": "positive", "score": 0.8}
     """
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         # Cache storage: key -> (value, expiry_time)
         cache = {}
@@ -289,7 +291,7 @@ def memoize_ttl(
                             key_hash=key_hash,
                             ttl=int(expiry_time - current_time),
                             latency_ms=latency_ms,
-                            hit=True
+                            hit=True,
                         )
                         return cached_value
 
@@ -315,7 +317,7 @@ def memoize_ttl(
                                     key_hash=key_hash,
                                     ttl=int(expiry_time - current_time),
                                     latency_ms=latency_ms,
-                                    hit=True
+                                    hit=True,
                                 )
                                 return cached_value
 
@@ -324,7 +326,7 @@ def memoize_ttl(
                         stage="cache.event",
                         status="miss",
                         key_hash=key_hash,
-                        latency_ms=int((time.time() - start_time) * 1000)
+                        latency_ms=int((time.time() - start_time) * 1000),
                     )
 
                     # Compute new value
@@ -346,7 +348,7 @@ def memoize_ttl(
                             status="fill",
                             key_hash=key_hash,
                             ttl=jittered_ttl,
-                            latency_ms=compute_ms
+                            latency_ms=compute_ms,
                         )
 
                         return result
@@ -363,7 +365,7 @@ def memoize_ttl(
                             key_hash=key_hash,
                             cause="function_error",
                             error=str(e)[:200],
-                            latency_ms=compute_ms
+                            latency_ms=compute_ms,
                         )
 
                         return fallback
@@ -376,19 +378,12 @@ def memoize_ttl(
             """Clear all cached values."""
             with cache_lock:
                 cache.clear()
-                log_json(
-                    stage="cache.event",
-                    status="clear",
-                    func=func.__name__
-                )
+                log_json(stage="cache.event", status="clear", func=func.__name__)
 
         def cache_info():
             """Get cache statistics."""
             with cache_lock:
-                return {
-                    "size": len(cache),
-                    "keys": list(cache.keys())
-                }
+                return {"size": len(cache), "keys": list(cache.keys())}
 
         # Attach utility methods to wrapper
         wrapper.clear_cache = clear_cache
@@ -400,8 +395,7 @@ def memoize_ttl(
 
 
 def memoize_ttl_redis(
-    seconds: int,
-    fallback: Any = None
+    seconds: int, fallback: Any = None
 ) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """
     Redis-backed cache decorator with TTL expiration.
@@ -424,6 +418,7 @@ def memoize_ttl_redis(
             # Database query
             return db.query(user_id)
     """
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         # Create local cache as fallback
         local_cache = {}
@@ -458,7 +453,7 @@ def memoize_ttl_redis(
                                 key_hash=key_hash,
                                 layer="redis",
                                 latency_ms=latency_ms,
-                                hit=True
+                                hit=True,
                             )
                             return cached_value
                         except Exception:
@@ -476,7 +471,7 @@ def memoize_ttl_redis(
                         status="degrade",
                         key_hash=key_hash,
                         cause="redis_error",
-                        error=str(e)[:200]
+                        error=str(e)[:200],
                     )
                     rc = None  # Mark Redis as unavailable for this request
 
@@ -495,7 +490,7 @@ def memoize_ttl_redis(
                             layer="local",
                             ttl=int(expiry_time - current_time),
                             latency_ms=latency_ms,
-                            hit=True
+                            hit=True,
                         )
                         return cached_value
 
@@ -535,7 +530,7 @@ def memoize_ttl_redis(
                         stage="cache.event",
                         status="miss",
                         key_hash=key_hash,
-                        latency_ms=int((time.time() - start_time) * 1000)
+                        latency_ms=int((time.time() - start_time) * 1000),
                     )
 
                     # Compute new value
@@ -556,13 +551,15 @@ def memoize_ttl_redis(
                                 redis_success = True
                             except Exception as e:
                                 # Redis write failed
-                                cache_degrade_count_total.labels(cause="redis_error").inc()
+                                cache_degrade_count_total.labels(
+                                    cause="redis_error"
+                                ).inc()
                                 log_json(
                                     stage="cache.event",
                                     status="error",
                                     key_hash=key_hash,
                                     cause="redis_write_error",
-                                    error=str(e)[:200]
+                                    error=str(e)[:200],
                                 )
 
                         # Always store in local cache
@@ -577,7 +574,7 @@ def memoize_ttl_redis(
                             key_hash=key_hash,
                             ttl=jittered_ttl,
                             layer="redis" if redis_success else "local",
-                            latency_ms=compute_ms
+                            latency_ms=compute_ms,
                         )
 
                         return result
@@ -593,7 +590,9 @@ def memoize_ttl_redis(
                             cache_degrade_count_total.labels(cause="double_fault").inc()
                             cause = "double_fault"
                         else:
-                            cache_degrade_count_total.labels(cause="function_error").inc()
+                            cache_degrade_count_total.labels(
+                                cause="function_error"
+                            ).inc()
                             cause = "function_error"
 
                         log_json(
@@ -602,7 +601,7 @@ def memoize_ttl_redis(
                             key_hash=key_hash,
                             cause=cause,
                             error=str(e)[:200],
-                            latency_ms=compute_ms
+                            latency_ms=compute_ms,
                         )
 
                         return fallback
@@ -629,21 +628,17 @@ def memoize_ttl_redis(
                         stage="cache.event",
                         status="error",
                         func=func.__name__,
-                        error=str(e)[:200]
+                        error=str(e)[:200],
                     )
 
-            log_json(
-                stage="cache.event",
-                status="clear",
-                func=func.__name__
-            )
+            log_json(stage="cache.event", status="clear", func=func.__name__)
 
         def cache_info():
             """Get cache statistics."""
             with local_lock:
                 info = {
                     "local_size": len(local_cache),
-                    "local_keys": list(local_cache.keys())
+                    "local_keys": list(local_cache.keys()),
                 }
 
             # Try to get Redis info

@@ -7,7 +7,8 @@ def test_upsert_insert_conflict_fallback(monkeypatch):
     os.environ.setdefault("POSTGRES_URL", "postgresql://stub")
     os.environ.setdefault("EVENT_DEADLOCK_MAX_RETRY", "0")  # immediate fallback
 
-    from sqlalchemy import MetaData, Table, Column, Text, Integer, Float
+    from sqlalchemy import Column, Float, Integer, MetaData, Table, Text
+
     try:
         from sqlalchemy.dialects.postgresql import JSONB
     except Exception:
@@ -19,7 +20,8 @@ def test_upsert_insert_conflict_fallback(monkeypatch):
     # Build table schema minimal
     md = MetaData()
     events_tbl = Table(
-        "events", md,
+        "events",
+        md,
         Column("event_key", Text, primary_key=True),
         Column("symbol", Text),
         Column("token_ca", Text),
@@ -104,7 +106,11 @@ def test_upsert_insert_conflict_fallback(monkeypatch):
     # Snapshot metrics before
     before_fallback = mc.insert_conflict_fallback_total.values.copy()
 
-    post = {"type": "market-update", "text": "$PEPE to moon", "created_ts": datetime.now(timezone.utc)}
+    post = {
+        "type": "market-update",
+        "text": "$PEPE to moon",
+        "created_ts": datetime.now(timezone.utc),
+    }
     ev.upsert_event(post)
 
     # Ensure fallback counter increments when exceeding retry threshold

@@ -3,7 +3,9 @@
 
 import sys
 from datetime import datetime, timedelta, timezone
+
 from api.cache import get_redis_client
+
 
 def main():
     if len(sys.argv) < 2:
@@ -28,6 +30,7 @@ def main():
         key = f"topic:mentions:{topic_id}:{ts.isoformat()}"
         rc.setex(key, 24 * 3600, str(count))
     print(f"Seeded {len(samples)} points for {topic_id}")
+
 
 if __name__ == "__main__":
     main()

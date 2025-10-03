@@ -5,13 +5,14 @@ Revises: 002
 Create Date: 2025-08-23 00:00:00.000000
 
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers, used by Alembic.
-revision = '003'
-down_revision = '002'
+revision = "003"
+down_revision = "002"
 branch_labels = None
 depends_on = None
 
@@ -19,8 +20,14 @@ depends_on = None
 def _has_table(insp, name: str) -> bool:
     return insp.has_table(name)
 
+
 def _has_column(insp, table: str, col: str) -> bool:
-    return any(c["name"] == col for c in insp.get_columns(table)) if insp.has_table(table) else False
+    return (
+        any(c["name"] == col for c in insp.get_columns(table))
+        if insp.has_table(table)
+        else False
+    )
+
 
 def upgrade() -> None:
     bind = op.get_bind()
@@ -37,10 +44,22 @@ def upgrade() -> None:
             sa.Column("time_bucket_start", sa.TIMESTAMP(timezone=True), nullable=False),
             sa.Column("start_ts", sa.TIMESTAMP(timezone=True), nullable=False),
             sa.Column("last_ts", sa.TIMESTAMP(timezone=True), nullable=False),
-            sa.Column("evidence_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
-            sa.Column("candidate_score", sa.Float(), nullable=False, server_default=sa.text("0")),
+            sa.Column(
+                "evidence_count",
+                sa.Integer(),
+                nullable=False,
+                server_default=sa.text("0"),
+            ),
+            sa.Column(
+                "candidate_score",
+                sa.Float(),
+                nullable=False,
+                server_default=sa.text("0"),
+            ),
             sa.Column("keywords_norm", JSONB(), nullable=True),
-            sa.Column("version", sa.Text(), nullable=False, server_default=sa.text("'v1'")),
+            sa.Column(
+                "version", sa.Text(), nullable=False, server_default=sa.text("'v1'")
+            ),
             sa.Column("last_sentiment", sa.Text(), nullable=True),
             sa.Column("last_sentiment_score", sa.Float(), nullable=True),
             sa.PrimaryKeyConstraint("event_key"),
@@ -68,19 +87,31 @@ def upgrade() -> None:
 
     # 索引幂等创建
     if _has_table(insp, "events"):
-        existing = {ix["name"] for ix in sa.inspect(op.get_bind()).get_indexes("events")}
+        existing = {
+            ix["name"] for ix in sa.inspect(op.get_bind()).get_indexes("events")
+        }
         if "idx_events_symbol_bucket" not in existing:
-            op.create_index("idx_events_symbol_bucket", "events", ["symbol", "time_bucket_start"])
+            op.create_index(
+                "idx_events_symbol_bucket", "events", ["symbol", "time_bucket_start"]
+            )
         if "idx_events_last_ts" not in existing:
             op.create_index("idx_events_last_ts", "events", [sa.text("last_ts DESC")])
+
 
 def downgrade() -> None:
     # 只撤我们新增的索引和列，别动老字段/外键/整张表
     op.execute("DROP INDEX IF EXISTS idx_events_last_ts")
     op.execute("DROP INDEX IF EXISTS idx_events_symbol_bucket")
     for col in [
-        "last_sentiment_score", "last_sentiment", "version", "keywords_norm",
-        "candidate_score", "evidence_count", "time_bucket_start",
-        "topic_hash", "token_ca", "symbol",
+        "last_sentiment_score",
+        "last_sentiment",
+        "version",
+        "keywords_norm",
+        "candidate_score",
+        "evidence_count",
+        "time_bucket_start",
+        "topic_hash",
+        "token_ca",
+        "symbol",
     ]:
         op.execute(f'ALTER TABLE "events" DROP COLUMN IF EXISTS "{col}"')

@@ -3,49 +3,52 @@ Prometheus metrics exporter for building text format output.
 Provides clean separation from metrics collection/storage.
 """
 
-from typing import Dict, List, Optional, Any
 from collections import defaultdict
-
+from typing import Any, Dict, List, Optional
 
 # Global metric registry
 _metrics_registry: Dict[str, Any] = {}
 
 
-def register_counter(name: str, help_text: str, labels: Optional[Dict[str, str]] = None, value: float = 0):
+def register_counter(
+    name: str, help_text: str, labels: Optional[Dict[str, str]] = None, value: float = 0
+):
     """Register or update a counter metric."""
     if name not in _metrics_registry:
         _metrics_registry[name] = {
             "type": "counter",
             "help": help_text,
-            "values": defaultdict(float)
+            "values": defaultdict(float),
         }
 
     label_str = _format_labels(labels)
     _metrics_registry[name]["values"][label_str] = value
 
 
-def register_gauge(name: str, help_text: str, labels: Optional[Dict[str, str]] = None, value: float = 0):
+def register_gauge(
+    name: str, help_text: str, labels: Optional[Dict[str, str]] = None, value: float = 0
+):
     """Register or update a gauge metric."""
     if name not in _metrics_registry:
-        _metrics_registry[name] = {
-            "type": "gauge",
-            "help": help_text,
-            "values": {}
-        }
+        _metrics_registry[name] = {"type": "gauge", "help": help_text, "values": {}}
 
     label_str = _format_labels(labels)
     _metrics_registry[name]["values"][label_str] = value
 
 
-def register_histogram(name: str, help_text: str, buckets: List[float],
-                       samples: Optional[List[float]] = None):
+def register_histogram(
+    name: str,
+    help_text: str,
+    buckets: List[float],
+    samples: Optional[List[float]] = None,
+):
     """Register or update a histogram metric with samples."""
     if name not in _metrics_registry:
         _metrics_registry[name] = {
             "type": "histogram",
             "help": help_text,
             "buckets": buckets,
-            "samples": []
+            "samples": [],
         }
 
     if samples:
@@ -80,7 +83,9 @@ def build_prom_text() -> str:
         register_gauge("outbox_backlog", "Push outbox backlog size", value=0)
 
     # Always output pipeline_latency_ms histogram (even if empty)
-    lines.append("# HELP pipeline_latency_ms Latency histogram of pipeline in milliseconds")
+    lines.append(
+        "# HELP pipeline_latency_ms Latency histogram of pipeline in milliseconds"
+    )
     lines.append("# TYPE pipeline_latency_ms histogram")
 
     # Fixed buckets for pipeline_latency_ms
@@ -123,13 +128,25 @@ def build_prom_text() -> str:
 
     # Add standard metrics if not already present
     standard_metrics = [
-        ("telegram_send_total", "counter", "Count of Telegram send attempts by status/code"),
+        (
+            "telegram_send_total",
+            "counter",
+            "Count of Telegram send attempts by status/code",
+        ),
         ("telegram_retry_total", "counter", "Total number of Telegram send retries"),
         ("cards_degrade_count", "counter", "Total number of degraded events"),
         ("config_reload_total", "counter", "Total number of config reloads"),
-        ("config_reload_errors_total", "counter", "Total number of config reload errors"),
+        (
+            "config_reload_errors_total",
+            "counter",
+            "Total number of config reload errors",
+        ),
         ("config_version", "gauge", "Current config version"),
-        ("config_last_success_unixtime", "gauge", "Unix timestamp of last successful config reload"),
+        (
+            "config_last_success_unixtime",
+            "gauge",
+            "Unix timestamp of last successful config reload",
+        ),
         ("up", "gauge", "1 if metrics handler is healthy"),
         ("build_info", "gauge", "Build information"),
     ]
@@ -157,25 +174,33 @@ def update_from_hotreload_registry(registry_metrics: Dict[str, Any]):
 
     # Update config reload metrics
     if "config_reload_total" in registry_metrics:
-        register_counter("config_reload_total",
-                        "Total number of config reloads",
-                        value=registry_metrics["config_reload_total"])
+        register_counter(
+            "config_reload_total",
+            "Total number of config reloads",
+            value=registry_metrics["config_reload_total"],
+        )
 
     if "config_reload_errors_total" in registry_metrics:
-        register_counter("config_reload_errors_total",
-                         "Total number of config reload errors",
-                         value=registry_metrics["config_reload_errors_total"])
+        register_counter(
+            "config_reload_errors_total",
+            "Total number of config reload errors",
+            value=registry_metrics["config_reload_errors_total"],
+        )
 
     if "config_version" in registry_metrics:
-        register_gauge("config_version",
-                      "Current config version",
-                      labels={"sha": registry_metrics["config_version"]},
-                      value=1)
+        register_gauge(
+            "config_version",
+            "Current config version",
+            labels={"sha": registry_metrics["config_version"]},
+            value=1,
+        )
 
     if "config_last_success_unixtime" in registry_metrics:
-        register_gauge("config_last_success_unixtime",
-                      "Unix timestamp of last successful config reload",
-                      value=registry_metrics["config_last_success_unixtime"])
+        register_gauge(
+            "config_last_success_unixtime",
+            "Unix timestamp of last successful config reload",
+            value=registry_metrics["config_last_success_unixtime"],
+        )
 
 
 def export_text() -> str:

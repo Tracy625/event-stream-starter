@@ -4,6 +4,7 @@ Hot configuration reload kernel for rules/*.yml files.
 Supports atomic replacement, thread safety, SIGHUP support, and a killswitch option.
 """
 
+import copy
 import hashlib
 import os
 import re
@@ -13,43 +14,46 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import copy
+
 import yaml
 
 from api.core.metrics_store import log_json
 
 try:
     from prometheus_client import Counter, Histogram
+
     from api.core.metrics import PROM_REGISTRY
 
     # Configuration reload counters - register to shared PROM_REGISTRY
     config_reload_failures_total = Counter(
-        'config_reload_failures_total',
-        'Total number of configuration reload failures',
-        ['source', 'reason'],
-        registry=PROM_REGISTRY
+        "config_reload_failures_total",
+        "Total number of configuration reload failures",
+        ["source", "reason"],
+        registry=PROM_REGISTRY,
     )
 
     config_reload_success_total = Counter(
-        'config_reload_success_total',
-        'Total number of successful configuration reloads',
-        ['source'],
-        registry=PROM_REGISTRY
+        "config_reload_success_total",
+        "Total number of successful configuration reloads",
+        ["source"],
+        registry=PROM_REGISTRY,
     )
 
     config_reload_duration_seconds = Histogram(
-        'config_reload_duration_seconds',
-        'Time spent reloading configuration in seconds',
+        "config_reload_duration_seconds",
+        "Time spent reloading configuration in seconds",
         buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
-        registry=PROM_REGISTRY
+        registry=PROM_REGISTRY,
     )
 except ImportError:
     # Fallback to no-op metrics if prometheus_client not available
     class NoOpMetric:
         def labels(self, **kwargs):
             return self
+
         def inc(self, amount=1):
             pass
+
         def observe(self, value):
             pass
 
@@ -72,10 +76,7 @@ class HotConfigRegistry:
     """
 
     def __init__(
-        self,
-        files: List[str],
-        ttl_seconds: int = 60,
-        rules_dir: str = "rules"
+        self, files: List[str], ttl_seconds: int = 60, rules_dir: str = "rules"
     ):
         """
         Initialize the hot config registry.
@@ -98,7 +99,9 @@ class HotConfigRegistry:
         self._file_states: Dict[str, Dict[str, Any]] = {}
 
         # Thread safety
-        self._read_lock = threading.RLock()  # For snapshot reads (mostly unused due to RCU)
+        self._read_lock = (
+            threading.RLock()
+        )  # For snapshot reads (mostly unused due to RCU)
         self._write_lock = threading.Lock()  # For updates
         self._last_check_ts = 0.0
         self._min_cooldown = 1.0  # Minimum 1 second between checks
@@ -112,7 +115,9 @@ class HotConfigRegistry:
 
         # Initial load (fail-fast on startup)
         if not self._initial_load():
-            raise RuntimeError(f"[hotreload] Failed initial config load from {self.rules_dir}")
+            raise RuntimeError(
+                f"[hotreload] Failed initial config load from {self.rules_dir}"
+            )
 
     def _initial_load(self) -> bool:
         """
@@ -132,11 +137,10 @@ class HotConfigRegistry:
                     reason="invalid_filename",
                     trace_id=trace_id,
                     ts=time.time(),
-                    message=f"[hotreload] Skipping invalid filename: {filename}"
+                    message=f"[hotreload] Skipping invalid filename: {filename}",
                 )
                 config_reload_failures_total.labels(
-                    source="unknown",
-                    reason="invalid_filename"
+                    source="unknown", reason="invalid_filename"
                 ).inc()
                 continue
 
@@ -150,11 +154,10 @@ class HotConfigRegistry:
                     reason="file_not_found",
                     trace_id=trace_id,
                     ts=time.time(),
-                    message=f"[hotreload] File not found: {filepath}"
+                    message=f"[hotreload] File not found: {filepath}",
                 )
                 config_reload_failures_total.labels(
-                    source=ns,
-                    reason="file_not_found"
+                    source=ns, reason="file_not_found"
                 ).inc()
                 # Initial load is lenient about missing files
                 continue
@@ -176,14 +179,14 @@ class HotConfigRegistry:
                 file_states[filename] = {
                     "mtime": mtime,
                     "sha1": sha1,
-                    "filepath": str(filepath)
+                    "filepath": str(filepath),
                 }
 
                 log_json(
                     stage="config.applied",
                     ns=ns,
                     sha=sha1[:8],
-                    message=f"[hotreload] Loaded {ns} from {filename}"
+                    message=f"[hotreload] Loaded {ns} from {filename}",
                 )
                 config_reload_success_total.labels(source=ns).inc()
 
@@ -196,11 +199,10 @@ class HotConfigRegistry:
                     trace_id=trace_id,
                     ts=time.time(),
                     error=str(e)[:200],
-                    message=f"[hotreload] Failed to parse {filepath}: {e}"
+                    message=f"[hotreload] Failed to parse {filepath}: {e}",
                 )
                 config_reload_failures_total.labels(
-                    source=ns,
-                    reason="parse_error"
+                    source=ns, reason="parse_error"
                 ).inc()
                 # Initial load must fail if any file can't be parsed
                 return False
@@ -213,12 +215,9 @@ class HotConfigRegistry:
                     trace_id=trace_id,
                     ts=time.time(),
                     error=str(e)[:200],
-                    message=f"[hotreload] IO error reading {filepath}: {e}"
+                    message=f"[hotreload] IO error reading {filepath}: {e}",
                 )
-                config_reload_failures_total.labels(
-                    source=ns,
-                    reason="io_error"
-                ).inc()
+                config_reload_failures_total.labels(source=ns, reason="io_error").inc()
                 return False
             except Exception as e:
                 trace_id = str(uuid.uuid4())[:8]
@@ -229,12 +228,9 @@ class HotConfigRegistry:
                     trace_id=trace_id,
                     ts=time.time(),
                     error=str(e)[:200],
-                    message=f"[hotreload] Unexpected error with {filepath}: {e}"
+                    message=f"[hotreload] Unexpected error with {filepath}: {e}",
                 )
-                config_reload_failures_total.labels(
-                    source=ns,
-                    reason="unknown"
-                ).inc()
+                config_reload_failures_total.labels(source=ns, reason="unknown").inc()
                 return False
 
         # Atomic replacement
@@ -262,7 +258,7 @@ class HotConfigRegistry:
         stem = filename[:-4]  # Remove .yml
 
         # Validate filename (prevent directory traversal and weird names)
-        if not re.match(r'^[-_a-z0-9]+$', stem):
+        if not re.match(r"^[-_a-z0-9]+$", stem):
             return None
 
         return stem
@@ -313,7 +309,7 @@ class HotConfigRegistry:
                 old_sha=self._version_sha[:8],
                 new_sha=self._calculate_version()[:8],
                 elapsed_ms=elapsed_ms,
-                message=f"[hotreload] Configuration reloaded in {elapsed_ms}ms"
+                message=f"[hotreload] Configuration reloaded in {elapsed_ms}ms",
             )
 
         return changed
@@ -346,11 +342,10 @@ class HotConfigRegistry:
                     reason="invalid_filename",
                     trace_id=trace_id,
                     ts=time.time(),
-                    message=f"[hotreload] Invalid filename during reload: {filename}"
+                    message=f"[hotreload] Invalid filename during reload: {filename}",
                 )
                 config_reload_failures_total.labels(
-                    source="unknown",
-                    reason="invalid_filename"
+                    source="unknown", reason="invalid_filename"
                 ).inc()
                 continue
 
@@ -371,11 +366,10 @@ class HotConfigRegistry:
                         reason="file_not_found",
                         trace_id=trace_id,
                         ts=time.time(),
-                        message=f"[hotreload] File not found during reload: {filepath}"
+                        message=f"[hotreload] File not found during reload: {filepath}",
                     )
                     config_reload_failures_total.labels(
-                        source=ns,
-                        reason="file_not_found"
+                        source=ns, reason="file_not_found"
                     ).inc()
                 continue
 
@@ -401,7 +395,7 @@ class HotConfigRegistry:
                     temp_file_states[filename] = {
                         "mtime": current_mtime,
                         "sha1": sha1,
-                        "filepath": str(filepath)
+                        "filepath": str(filepath),
                     }
                     continue
 
@@ -418,7 +412,7 @@ class HotConfigRegistry:
                 temp_file_states[filename] = {
                     "mtime": current_mtime,
                     "sha1": sha1,
-                    "filepath": str(filepath)
+                    "filepath": str(filepath),
                 }
                 any_changed = True
 
@@ -428,7 +422,7 @@ class HotConfigRegistry:
                     old_sha=old_state.get("sha1", "")[:8],
                     new_sha=sha1[:8],
                     elapsed_ms=parse_ms,
-                    message=f"[hotreload] Reloaded {ns}"
+                    message=f"[hotreload] Reloaded {ns}",
                 )
                 config_reload_success_total.labels(source=ns).inc()
 
@@ -443,11 +437,10 @@ class HotConfigRegistry:
                     trace_id=trace_id,
                     ts=time.time(),
                     error=str(e)[:200],
-                    message=f"[hotreload] Parse error in {filepath}, keeping old version"
+                    message=f"[hotreload] Parse error in {filepath}, keeping old version",
                 )
                 config_reload_failures_total.labels(
-                    source=ns,
-                    reason="parse_error"
+                    source=ns, reason="parse_error"
                 ).inc()
                 if ns in current_snapshot:
                     temp_configs[ns] = current_snapshot[ns]
@@ -465,12 +458,9 @@ class HotConfigRegistry:
                     trace_id=trace_id,
                     ts=time.time(),
                     error=str(e)[:200],
-                    message=f"[hotreload] IO error reading {filepath}, keeping old version"
+                    message=f"[hotreload] IO error reading {filepath}, keeping old version",
                 )
-                config_reload_failures_total.labels(
-                    source=ns,
-                    reason="io_error"
-                ).inc()
+                config_reload_failures_total.labels(source=ns, reason="io_error").inc()
                 if ns in current_snapshot:
                     temp_configs[ns] = current_snapshot[ns]
                     if filename in current_file_states:
@@ -486,12 +476,9 @@ class HotConfigRegistry:
                     trace_id=trace_id,
                     ts=time.time(),
                     error=str(e)[:200],
-                    message=f"[hotreload] Unexpected error reading {filepath}, keeping old version"
+                    message=f"[hotreload] Unexpected error reading {filepath}, keeping old version",
                 )
-                config_reload_failures_total.labels(
-                    source=ns,
-                    reason="unknown"
-                ).inc()
+                config_reload_failures_total.labels(source=ns, reason="unknown").inc()
                 if ns in current_snapshot:
                     temp_configs[ns] = current_snapshot[ns]
                     if filename in current_file_states:
@@ -584,20 +571,21 @@ class HotConfigRegistry:
         Install SIGHUP handler for immediate config refresh.
         Should be called once at startup.
         """
+
         def handle_sighup(signum, frame):
             """Handle SIGHUP signal for config reload."""
             if not self._enabled:
                 log_json(
                     stage="config.reload",
                     reason="disabled",
-                    message="[hotreload] SIGHUP received but hot reload is disabled"
+                    message="[hotreload] SIGHUP received but hot reload is disabled",
                 )
                 return
 
             log_json(
                 stage="config.reload",
                 reason="sighup",
-                message="[hotreload] SIGHUP received, triggering reload"
+                message="[hotreload] SIGHUP received, triggering reload",
             )
 
             # Force reload
@@ -607,15 +595,12 @@ class HotConfigRegistry:
                 log_json(
                     stage="config.applied",
                     version=self._version_sha[:8],
-                    message="[hotreload] Configuration reloaded via SIGHUP"
+                    message="[hotreload] Configuration reloaded via SIGHUP",
                 )
 
         # Install handler
         signal.signal(signal.SIGHUP, handle_sighup)
-        log_json(
-            stage="config.reload",
-            message="[hotreload] SIGHUP handler installed"
-        )
+        log_json(stage="config.reload", message="[hotreload] SIGHUP handler installed")
 
     def get_metrics(self) -> Dict[str, Any]:
         """
@@ -629,7 +614,7 @@ class HotConfigRegistry:
             "config_reload_errors_total": self._reload_errors,
             "config_version": self._version_sha,
             "config_last_success_unixtime": int(self._last_success_ts),
-            "config_hotreload_enabled": self._enabled
+            "config_hotreload_enabled": self._enabled,
         }
 
 
@@ -666,7 +651,7 @@ def get_registry() -> HotConfigRegistry:
             "risk_rules.yml",
             "onchain.yml",
             "rules.yml",
-            "topic_merge.yml"
+            "topic_merge.yml",
         ]
 
         existing_files = []
@@ -677,9 +662,7 @@ def get_registry() -> HotConfigRegistry:
 
         try:
             registry = HotConfigRegistry(
-                files=existing_files,
-                ttl_seconds=ttl,
-                rules_dir=rules_dir
+                files=existing_files, ttl_seconds=ttl, rules_dir=rules_dir
             )
         except Exception as exc:
             # If we have a previous registry, reuse it instead of crashing so that
@@ -689,7 +672,7 @@ def get_registry() -> HotConfigRegistry:
                     stage="config.reload.error",
                     reason="initial_load_failure",
                     error=str(exc)[:200],
-                    message="[hotreload] Failed to instantiate new registry; falling back to last good version"
+                    message="[hotreload] Failed to instantiate new registry; falling back to last good version",
                 )
                 _registry = previous_registry
                 return _registry

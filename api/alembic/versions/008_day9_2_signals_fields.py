@@ -1,7 +1,7 @@
 """Day9.2: signals add source_level, features_snapshot; extend goplus_risk_enum with 'gray'"""
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -18,7 +18,13 @@ def upgrade():
     # 1) 新增可空列（最小变更，读路径不破）
     with op.batch_alter_table("signals") as batch_op:
         batch_op.add_column(sa.Column("source_level", sa.Text(), nullable=True))
-        batch_op.add_column(sa.Column("features_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=True))
+        batch_op.add_column(
+            sa.Column(
+                "features_snapshot",
+                postgresql.JSONB(astext_type=sa.Text()),
+                nullable=True,
+            )
+        )
 
     # 2) 不再额外创建 CHECK。该列为 ENUM，枚举本身已限定取值范围。
     # 若你执意要 CHECK，请使用显式枚举字面量，示例：

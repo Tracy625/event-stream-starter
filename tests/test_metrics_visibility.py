@@ -1,5 +1,6 @@
 def test_metrics_core_export_contains_events_metrics():
     from api.core import metrics as mc
+
     # Touch counters/gauges/histograms
     mc.events_key_conflict_total.inc({"reason": "identity_mismatch"})
     mc.evidence_merge_ops_total.inc({"scope": "cross_source"})
@@ -19,4 +20,3 @@ def test_metrics_core_export_contains_events_metrics():
     assert "evidence_compact_enqueue_total" in text
     assert "events_upsert_tx_ms_bucket" in text or "events_upsert_tx_ms_count" in text
     assert "evidence_completion_rate" in text
-

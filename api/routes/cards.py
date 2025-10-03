@@ -7,7 +7,7 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from api.cards.build import build_card
@@ -23,25 +23,27 @@ async def preview_card(
         min_length=8,
         max_length=128,
         regex="^[A-Z0-9:_\\-\\.]{8,128}$",  # align with cards.schema.json
-        description="Event key (8–128 chars, matches cards.schema.json)"
+        description="Event key (8–128 chars, matches cards.schema.json)",
     ),
-    render: int = Query(0, ge=0, le=1, description="Set to 1 to enable rendered output")
+    render: int = Query(
+        0, ge=0, le=1, description="Set to 1 to enable rendered output"
+    ),
 ) -> dict:
     """
     Preview a card by event_key
-    
+
     Returns a schema-compliant card object with optional rendering.
-    
+
     Parameters:
     - event_key: Event identifier matching pattern ^[A-Z0-9:_\\-\\.]{8,128}$ (uppercase only)
     - render: 0 (default) or 1 to enable template rendering
-    
+
     Returns:
     - 200: Schema-compliant card object
-    - 404: Event key not found  
+    - 404: Event key not found
     - 422: Invalid parameters
     - 500: Internal error
-    
+
     Example response:
     ```json
     {
@@ -71,69 +73,69 @@ async def preview_card(
     """
     request_id = str(uuid.uuid4())
     status_code = 200
-    
+
     try:
         # Build card
         card = build_card(event_key, render=bool(render))
-        
+
         # Log successful request
         log_data = {
             "request_id": request_id,
             "event_key": event_key,
             "render": render,
-            "status": 200
+            "status": 200,
         }
         logger.info(json.dumps(log_data, ensure_ascii=False))
-        
+
         return card
-        
+
     except ValueError as e:
         # Handle validation errors and "no usable sources"
         error_msg = str(e)
         status_code = 422
-        
+
         # Log error
         log_data = {
             "request_id": request_id,
             "event_key": event_key,
             "render": render,
             "status": status_code,
-            "error": error_msg
+            "error": error_msg,
         }
         logger.warning(json.dumps(log_data, ensure_ascii=False))
-        
+
         raise HTTPException(status_code=status_code, detail=error_msg)
-        
+
     except (KeyError, LookupError) as e:
         # Handle not found errors
         status_code = 404
         error_msg = f"Event key not found: {event_key}"
-        
+
         # Log not found
         log_data = {
             "request_id": request_id,
             "event_key": event_key,
             "render": render,
             "status": status_code,
-            "error": error_msg
+            "error": error_msg,
         }
         logger.warning(json.dumps(log_data, ensure_ascii=False))
-        
+
         raise HTTPException(status_code=status_code, detail=error_msg)
-        
+
     except Exception as e:
         # Handle unexpected errors
         status_code = 500
         error_msg = f"Internal server error: {str(e)}"
-        
+
         # Log error
         log_data = {
             "request_id": request_id,
             "event_key": event_key,
             "render": render,
             "status": status_code,
-            "error": str(e)
+            "error": str(e),
         }
         logger.error(json.dumps(log_data, ensure_ascii=False))
-        
+
         raise HTTPException(status_code=status_code, detail="Internal server error")

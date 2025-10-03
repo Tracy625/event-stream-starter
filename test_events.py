@@ -20,7 +20,7 @@ post1 = {
     "keywords": ["airdrop", "arb", "claim"],
     "created_ts": datetime.now(timezone.utc),
     "sentiment_score": 0.8,
-    "sentiment_label": "pos"
+    "sentiment_label": "pos",
 }
 
 post2 = {
@@ -29,7 +29,7 @@ post2 = {
     "keywords": ["$pepe", "moon", "10x"],
     "created_ts": datetime.now(timezone.utc),
     "sentiment_score": 0.5,
-    "sentiment_label": "pos"
+    "sentiment_label": "pos",
 }
 
 # Test make_event_key
@@ -49,11 +49,11 @@ print("\nTesting upsert_event:")
 try:
     result1 = upsert_event(post1)
     print(f"  Result 1: {result1}")
-    
+
     # Upsert same event again (should increment evidence_count)
     result1_again = upsert_event(post1)
     print(f"  Result 1 (again): {result1_again}")
-    
+
     result2 = upsert_event(post2)
     print(f"  Result 2: {result2}")
 except Exception as e:

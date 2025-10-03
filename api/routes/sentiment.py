@@ -21,6 +21,7 @@ for name in ("router", "sentiment_router", "routes"):
 if candidate is None:
     try:
         from fastapi import APIRouter  # imported only for isinstance check
+
         for name in dir(mod):
             obj: Any = getattr(mod, name)
             if isinstance(obj, APIRouter):

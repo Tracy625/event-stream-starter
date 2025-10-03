@@ -1,11 +1,15 @@
 """
 Transform between internal card format and external pushcard format
 """
-from typing import Dict, Any, Literal
+
+from typing import Any, Dict, Literal
+
 from api.cards.registry import RenderPayload
 
-def to_pushcard(payload: RenderPayload, rendered_text: str,
-                channel: Literal["tg", "ui"]) -> Dict[str, Any]:
+
+def to_pushcard(
+    payload: RenderPayload, rendered_text: str, channel: Literal["tg", "ui"]
+) -> Dict[str, Any]:
     """
     Transform internal card format (cards.schema.json) to pushcard format (pushcard.schema.json)
 
@@ -30,27 +34,23 @@ def to_pushcard(payload: RenderPayload, rendered_text: str,
             "price_usd": ctx.get("price_usd"),
             "liquidity_usd": ctx.get("liquidity_usd"),
             "fdv": ctx.get("fdv"),
-            "ohlc": ctx.get("ohlc", {})
+            "ohlc": ctx.get("ohlc", {}),
         },
         "sources": {
             "security_source": ctx.get("risk_source", ""),
-            "dex_source": ctx.get("dex_source", "")
+            "dex_source": ctx.get("dex_source", ""),
         },
         "states": {
             "cache": ctx.get("states", {}).get("cache", False),
             "degrade": meta["degrade"],
             "stale": ctx.get("states", {}).get("stale", False),
-            "reason": ctx.get("states", {}).get("reason", "")
+            "reason": ctx.get("states", {}).get("reason", ""),
         },
-        "evidence": {
-            "goplus_raw": {
-                "summary": ctx.get("goplus_summary", "")
-            }
-        },
+        "evidence": {"goplus_raw": {"summary": ctx.get("goplus_summary", "")}},
         "risk_note": ctx.get("risk_note", ""),
         "verify_path": ctx.get("verify_path", "/"),
         "data_as_of": ctx.get("data_as_of"),
-        "rendered": {}
+        "rendered": {},
     }
 
     # Add rendered content
@@ -75,6 +75,7 @@ def to_pushcard(payload: RenderPayload, rendered_text: str,
         pushcard["topic_mention_count"] = ctx.get("topic_mention_count")
 
     return pushcard
+
 
 def from_pushcard(pushcard: Dict[str, Any]) -> Dict[str, Any]:
     """

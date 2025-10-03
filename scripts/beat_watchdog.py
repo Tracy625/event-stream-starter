@@ -1,10 +1,16 @@
 # scripts/beat_watchdog.py
-import os, sys, time, subprocess, signal
+import os
+import signal
+import subprocess
+import sys
+import time
+
 import redis
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 KEY = os.getenv("BEAT_HEARTBEAT_KEY", "beat:last_heartbeat")
 STALE_SEC = int(os.getenv("BEAT_STALE_SEC", "15"))
+
 
 def get_ts(r):
     v = r.get(KEY)
@@ -14,6 +20,7 @@ def get_ts(r):
         return float(v)
     except Exception:
         return None
+
 
 def main():
     # 启动 celery beat 作为子进程
@@ -44,7 +51,10 @@ def main():
                 last_ok = now
             # 心跳超时，杀掉子进程并退出非零
             if now - last_ok > STALE_SEC:
-                print(f"[watchdog] heartbeat stale > {STALE_SEC}s; restarting beat", flush=True)
+                print(
+                    f"[watchdog] heartbeat stale > {STALE_SEC}s; restarting beat",
+                    flush=True,
+                )
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
                 except Exception:
@@ -58,6 +68,7 @@ def main():
             os.killpg(proc.pid, signal.SIGKILL)
         except Exception:
             pass
+
 
 if __name__ == "__main__":
     main()

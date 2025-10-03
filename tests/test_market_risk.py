@@ -1,12 +1,14 @@
 """Tests for market risk detection functionality"""
-import os
-import json
-import pytest
-from unittest.mock import patch, MagicMock, call
-from datetime import datetime, timezone
 
-from api.rules.eval_event import RuleEvaluator
+import json
+import os
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, call, patch
+
+import pytest
+
 from api.cards.dedup import make_state_version_with_rules
+from api.rules.eval_event import RuleEvaluator
 
 
 class TestMarketRiskRules:
@@ -25,14 +27,14 @@ class TestMarketRiskRules:
             "honeypot": False,
             "dex_liquidity": 100000.0,
             "dex_volume_1h": 600000.0,  # > 500000 threshold
-            "heat_slope": 1.0
+            "heat_slope": 1.0,
         }
-        events_data = {
-            "last_sentiment_score": 0.7
-        }
+        events_data = {"last_sentiment_score": 0.7}
 
         with patch.dict(os.environ, {"MARKET_RISK_VOLUME_THRESHOLD": "500000"}):
-            with patch('api.rules.eval_event.rules_market_risk_hits_total') as mock_metric:
+            with patch(
+                "api.rules.eval_event.rules_market_risk_hits_total"
+            ) as mock_metric:
                 result = evaluator.evaluate(signals_data, events_data)
 
                 # Check tags
@@ -60,14 +62,14 @@ class TestMarketRiskRules:
             "honeypot": False,
             "dex_liquidity": 5000.0,  # < 10000 threshold
             "dex_volume_1h": 50000.0,
-            "heat_slope": 0.5
+            "heat_slope": 0.5,
         }
-        events_data = {
-            "last_sentiment_score": 0.5
-        }
+        events_data = {"last_sentiment_score": 0.5}
 
         with patch.dict(os.environ, {"MARKET_RISK_LIQ_MIN": "10000"}):
-            with patch('api.rules.eval_event.rules_market_risk_hits_total') as mock_metric:
+            with patch(
+                "api.rules.eval_event.rules_market_risk_hits_total"
+            ) as mock_metric:
                 result = evaluator.evaluate(signals_data, events_data)
 
                 assert "market_risk" in result["tags"]
@@ -87,17 +89,17 @@ class TestMarketRiskRules:
             "honeypot": False,
             "dex_liquidity": 40000.0,  # < 50000 for MR03
             "dex_volume_1h": 600000.0,  # > 500000 for MR01 and MR03
-            "heat_slope": 1.0
+            "heat_slope": 1.0,
         }
-        events_data = {
-            "last_sentiment_score": 0.7
-        }
+        events_data = {"last_sentiment_score": 0.7}
 
-        with patch.dict(os.environ, {
-            "MARKET_RISK_VOLUME_THRESHOLD": "500000",
-            "MARKET_RISK_LIQ_RISK": "50000"
-        }):
-            with patch('api.rules.eval_event.rules_market_risk_hits_total') as mock_metric:
+        with patch.dict(
+            os.environ,
+            {"MARKET_RISK_VOLUME_THRESHOLD": "500000", "MARKET_RISK_LIQ_RISK": "50000"},
+        ):
+            with patch(
+                "api.rules.eval_event.rules_market_risk_hits_total"
+            ) as mock_metric:
                 result = evaluator.evaluate(signals_data, events_data)
 
                 # Should have single tag but multiple rules
@@ -120,11 +122,9 @@ class TestMarketRiskRules:
             "honeypot": False,
             "dex_liquidity": 100000.0,
             "dex_volume_1h": 150000.0,  # Would not trigger with default 500000
-            "heat_slope": 1.0
+            "heat_slope": 1.0,
         }
-        events_data = {
-            "last_sentiment_score": 0.7
-        }
+        events_data = {"last_sentiment_score": 0.7}
 
         # Lower threshold to 100000
         with patch.dict(os.environ, {"MARKET_RISK_VOLUME_THRESHOLD": "100000"}):
@@ -144,12 +144,10 @@ class TestMarketRiskRules:
             "lp_lock_days": 180,
             "honeypot": False,
             "dex_liquidity": 100000.0,
-            "dex_volume_1h": 50000.0
+            "dex_volume_1h": 50000.0,
             # heat_slope missing
         }
-        events_data = {
-            "last_sentiment_score": 0.7
-        }
+        events_data = {"last_sentiment_score": 0.7}
 
         # Should not raise error, heat_slope defaults to 0
         result = evaluator.evaluate(signals_data, events_data)
@@ -160,8 +158,8 @@ class TestMarketRiskRules:
 class TestMarketRiskSignalGeneration:
     """Test signal type setting based on market risk"""
 
-    @patch('api.jobs.goplus_scan.get_redis_client')
-    @patch.object(RuleEvaluator, 'evaluate')  # More precise mock
+    @patch("api.jobs.goplus_scan.get_redis_client")
+    @patch.object(RuleEvaluator, "evaluate")  # More precise mock
     def test_market_risk_type_set_with_cooldown(self, mock_evaluate, mock_redis_func):
         """Test that market_risk type is set when not in cooldown"""
         from api.core.metrics import signals_type_set_total
@@ -175,7 +173,7 @@ class TestMarketRiskSignalGeneration:
             "tags": ["market_risk"],
             "hit_rules": ["MR01"],
             "level": "caution",
-            "score": -15
+            "score": -15,
         }
 
         # Test the logic (simplified version)
@@ -191,7 +189,7 @@ class TestMarketRiskSignalGeneration:
                 # Would increment metric here in actual flow
                 assert signal_type == "market_risk"
 
-    @patch('api.jobs.goplus_scan.get_redis_client')
+    @patch("api.jobs.goplus_scan.get_redis_client")
     def test_cooldown_prevents_duplicate(self, mock_redis_func):
         """Test that cooldown prevents setting type again"""
         mock_redis = MagicMock()
@@ -218,7 +216,7 @@ class TestStateVersionWithRules:
         event = {"event_key": "TEST:123", "risk_level": "yellow", "state": "candidate"}
         hit_rules = ["MR01", "MR03"]
 
-        with patch('api.cards.dedup.make_state_version') as mock_base:
+        with patch("api.cards.dedup.make_state_version") as mock_base:
             mock_base.return_value = "candidate|yellow|degrade:0|v1"
 
             result = make_state_version_with_rules(event, hit_rules)
@@ -232,7 +230,7 @@ class TestStateVersionWithRules:
         """Test that rule order doesn't affect hash"""
         event = {"event_key": "TEST:123"}
 
-        with patch('api.cards.dedup.make_state_version') as mock_base:
+        with patch("api.cards.dedup.make_state_version") as mock_base:
             mock_base.return_value = "base|v1"
 
             # Different order, same rules
@@ -245,7 +243,7 @@ class TestStateVersionWithRules:
         """Test state version when no rules hit"""
         event = {"event_key": "TEST:123"}
 
-        with patch('api.cards.dedup.make_state_version') as mock_base:
+        with patch("api.cards.dedup.make_state_version") as mock_base:
             mock_base.return_value = "base|v1"
 
             result = make_state_version_with_rules(event, [])
@@ -275,14 +273,15 @@ class TestEndToEndIntegration:
 
         # Verify template files exist
         import os
+
         template_dir = "templates/cards"
         if os.path.exists(template_dir):
             # Only check if template dir exists (may not in test environment)
             assert os.path.exists(f"{template_dir}/market_risk_card.tg.j2")
             assert os.path.exists(f"{template_dir}/market_risk_card.ui.j2")
 
-    @patch('api.jobs.goplus_scan.signals_type_set_total')
-    @patch('api.rules.eval_event.rules_market_risk_hits_total')
+    @patch("api.jobs.goplus_scan.signals_type_set_total")
+    @patch("api.rules.eval_event.rules_market_risk_hits_total")
     def test_metrics_increment_correctly(self, mock_rules_metric, mock_signals_metric):
         """Test that metrics increment at correct points
 
@@ -300,16 +299,14 @@ class TestEndToEndIntegration:
             "honeypot": False,
             "dex_liquidity": 5000.0,  # Triggers MR02
             "dex_volume_1h": 600000.0,  # Triggers MR01
-            "heat_slope": 1.0
+            "heat_slope": 1.0,
         }
-        events_data = {
-            "last_sentiment_score": 0.7
-        }
+        events_data = {"last_sentiment_score": 0.7}
 
-        with patch.dict(os.environ, {
-            "MARKET_RISK_VOLUME_THRESHOLD": "500000",
-            "MARKET_RISK_LIQ_MIN": "10000"
-        }):
+        with patch.dict(
+            os.environ,
+            {"MARKET_RISK_VOLUME_THRESHOLD": "500000", "MARKET_RISK_LIQ_MIN": "10000"},
+        ):
             result = evaluator.evaluate(signals_data, events_data)
 
             # Rules metric should be called for each MR rule hit

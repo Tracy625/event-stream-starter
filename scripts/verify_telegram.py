@@ -4,13 +4,13 @@ Telegram smoke test script with master switch control.
 Honors TELEGRAM_PUSH_ENABLED environment variable.
 """
 
+import json
 import os
 import sys
-import json
 import time
-import urllib.request
 import urllib.error
-from typing import Optional, Dict, Any
+import urllib.request
+from typing import Any, Dict, Optional
 
 
 def mask_sensitive(value: str, show_last: int = 4) -> str:
@@ -34,7 +34,9 @@ def validate_boolean(value: str, var_name: str) -> bool:
     """Validate and normalize boolean environment variable."""
     normalized = value.lower()
     if normalized not in ["true", "false"]:
-        error(f"{var_name} must be 'true' or 'false' (case-insensitive), got: '{value}'")
+        error(
+            f"{var_name} must be 'true' or 'false' (case-insensitive), got: '{value}'"
+        )
         error("Please update your environment to use 'true' or 'false' only")
         sys.exit(2)
     return normalized == "true"
@@ -47,7 +49,7 @@ def send_telegram_message(
     thread_id: Optional[str] = None,
     api_base: str = "https://api.telegram.org",
     max_retries: int = 3,
-    timeout: int = 6
+    timeout: int = 6,
 ) -> Dict[str, Any]:
     """
     Send a message via Telegram Bot API with retry logic.
@@ -56,23 +58,19 @@ def send_telegram_message(
     url = f"{api_base}/bot{bot_token}/sendMessage"
 
     # Prepare request body
-    body = {
-        "chat_id": chat_id,
-        "text": text,
-        "disable_web_page_preview": True
-    }
+    body = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
     if thread_id:
         body["message_thread_id"] = thread_id
 
-    data = json.dumps(body).encode('utf-8')
+    data = json.dumps(body).encode("utf-8")
     headers = {"Content-Type": "application/json"}
 
     # Retry logic with exponential backoff
     for attempt in range(max_retries):
         try:
-            req = urllib.request.Request(url, data=data, headers=headers, method='POST')
+            req = urllib.request.Request(url, data=data, headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=timeout) as response:
-                response_data = response.read().decode('utf-8')
+                response_data = response.read().decode("utf-8")
                 result = json.loads(response_data)
 
                 if result.get("ok") == True:
@@ -84,7 +82,7 @@ def send_telegram_message(
                     raise Exception(f"API error {error_code}: {description}")
 
         except urllib.error.HTTPError as e:
-            response_body = e.read().decode('utf-8', errors='ignore')
+            response_body = e.read().decode("utf-8", errors="ignore")
             try:
                 error_data = json.loads(response_body)
                 error_code = error_data.get("error_code", e.code)
@@ -96,8 +94,10 @@ def send_telegram_message(
             # Check if we should retry (429 or 5xx)
             if e.code == 429 or (500 <= e.code < 600):
                 if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # 1s, 2s, 4s
-                    log(f"Retrying after {wait_time}s (attempt {attempt + 1}/{max_retries})...")
+                    wait_time = 2**attempt  # 1s, 2s, 4s
+                    log(
+                        f"Retrying after {wait_time}s (attempt {attempt + 1}/{max_retries})..."
+                    )
                     time.sleep(wait_time)
                     continue
 
@@ -106,7 +106,7 @@ def send_telegram_message(
 
         except Exception as e:
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
+                wait_time = 2**attempt
                 log(f"Retrying after {wait_time}s due to: {str(e)}")
                 time.sleep(wait_time)
                 continue
@@ -167,7 +167,7 @@ def main() -> int:
             chat_id=chat_id,
             text="smoke-ok",
             thread_id=thread_id if thread_id else None,
-            api_base=api_base
+            api_base=api_base,
         )
 
         message_id = result.get("result", {}).get("message_id", "unknown")

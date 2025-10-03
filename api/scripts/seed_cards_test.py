@@ -4,14 +4,15 @@ Seed test data for all four card types
 """
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Add parent dir to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.database import get_db_session
-from api.models import Signal, Event
+from api.models import Event, Signal
 from api.utils.logging import log_json
+
 
 def seed_test_cards():
     """Create test data for all card types"""
@@ -22,9 +23,13 @@ def seed_test_cards():
             "event_key": "TEST:PRIMARY:001",
             "type": "primary",
             "risk_level": "yellow",
-            "token_info": {"symbol": "PRIM", "chain": "eth", "ca_norm": "0x" + "1" * 40},
+            "token_info": {
+                "symbol": "PRIM",
+                "chain": "eth",
+                "ca_norm": "0x" + "1" * 40,
+            },
             "goplus_risk": "yellow",
-            "risk_note": "Test primary risk"
+            "risk_note": "Test primary risk",
         },
         {
             "event_key": "TEST:SECONDARY:001",
@@ -32,7 +37,7 @@ def seed_test_cards():
             "risk_level": "green",
             "token_info": {"symbol": "SEC", "chain": "eth", "ca_norm": "0x" + "2" * 40},
             "source": "verified",
-            "features_snapshot": {"active_addrs": 100, "stale": False}
+            "features_snapshot": {"active_addrs": 100, "stale": False},
         },
         {
             "event_key": "TEST:TOPIC:001",
@@ -41,17 +46,21 @@ def seed_test_cards():
             "topic_id": "test-topic-1",
             "topic_entities": ["pepe", "meme"],
             "topic_mention_count": 42,
-            "topic_confidence": 0.85
+            "topic_confidence": 0.85,
         },
         {
             "event_key": "TEST:MARKET:001",
             "type": "market_risk",
             "risk_level": "red",
-            "token_info": {"symbol": "RISK", "chain": "eth", "ca_norm": "0x" + "4" * 40},
+            "token_info": {
+                "symbol": "RISK",
+                "chain": "eth",
+                "ca_norm": "0x" + "4" * 40,
+            },
             "goplus_risk": "red",
             "honeypot": True,
-            "risk_note": "Honeypot detected"
-        }
+            "risk_note": "Honeypot detected",
+        },
     ]
 
     with get_db_session() as db:
@@ -63,7 +72,7 @@ def seed_test_cards():
                     event_key=data["event_key"],
                     type=data["type"],
                     state="candidate",
-                    ts=now
+                    ts=now,
                 )
                 db.add(signal)
 
@@ -75,13 +84,12 @@ def seed_test_cards():
             db.commit()
 
             log_json(
-                stage="seed.created",
-                type=data["type"],
-                event_key=data["event_key"]
+                stage="seed.created", type=data["type"], event_key=data["event_key"]
             )
 
     print(f"✅ Seeded {len(test_data)} test cards")
     return len(test_data)
+
 
 if __name__ == "__main__":
     count = seed_test_cards()

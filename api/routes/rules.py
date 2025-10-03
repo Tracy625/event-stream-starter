@@ -7,16 +7,16 @@ against the rule engine and return risk levels, scores, and reasons.
 
 import time
 import traceback
+from typing import Any, Dict
 from uuid import uuid4
-from typing import Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import text as sa_text
 
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import text as sa_text
+from sqlalchemy.orm import Session
+
+from api.core.metrics_store import log_json
 from api.database import get_db
 from api.rules import RuleEvaluator
-from api.core.metrics_store import log_json
-
 
 router = APIRouter(prefix="/rules", tags=["rules"])
 
@@ -24,21 +24,21 @@ router = APIRouter(prefix="/rules", tags=["rules"])
 @router.get("/eval")
 async def evaluate_rules(
     event_key: str = Query(..., description="Event key to evaluate"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
     Evaluate rules for a given event key.
-    
+
     Reads signals and events data from database, evaluates against
     rule engine, and returns level, score, reasons, and evidence.
-    
+
     Args:
         event_key: The event key to evaluate
         db: Database session
-    
+
     Returns:
         JSON response with evaluation results
-    
+
     Raises:
         404: If event_key not found in database
         422: If parameters are invalid
@@ -46,10 +46,11 @@ async def evaluate_rules(
     """
     start_time = time.time()
     request_id = str(uuid4())
-    
+
     try:
         # Query signals table for required fields
-        signals_query = sa_text("""
+        signals_query = sa_text(
+            """
             SELECT 
                 goplus_risk,
                 buy_tax,
@@ -62,27 +63,29 @@ async def evaluate_rules(
             WHERE event_key = :event_key
             ORDER BY ts DESC
             LIMIT 1
-        """)
-        
+        """
+        )
+
         signals_result = db.execute(signals_query, {"event_key": event_key}).first()
-        
+
         # Query events table for required fields
-        events_query = sa_text("""
+        events_query = sa_text(
+            """
             SELECT 
                 last_sentiment_score
             FROM events
             WHERE event_key = :event_key
-        """)
-        
+        """
+        )
+
         events_result = db.execute(events_query, {"event_key": event_key}).first()
-        
+
         # Check if any data exists
         if not signals_result and not events_result:
             raise HTTPException(
-                status_code=404,
-                detail=f"Event key '{event_key}' not found in database"
+                status_code=404, detail=f"Event key '{event_key}' not found in database"
             )
-        
+
         # Build data dictionaries with None for missing values
         signals_data = {}
         if signals_result:
@@ -93,7 +96,7 @@ async def evaluate_rules(
                 "lp_lock_days": signals_result.lp_lock_days,
                 "dex_liquidity": signals_result.dex_liquidity,
                 "dex_volume_1h": signals_result.dex_volume_1h,
-                "heat_slope": signals_result.heat_slope
+                "heat_slope": signals_result.heat_slope,
             }
         else:
             # All signals fields are None if no record
@@ -104,24 +107,20 @@ async def evaluate_rules(
                 "lp_lock_days": None,
                 "dex_liquidity": None,
                 "dex_volume_1h": None,
-                "heat_slope": None
+                "heat_slope": None,
             }
-        
+
         events_data = {}
         if events_result:
-            events_data = {
-                "last_sentiment_score": events_result.last_sentiment_score
-            }
+            events_data = {"last_sentiment_score": events_result.last_sentiment_score}
         else:
             # Event field is None if no record
-            events_data = {
-                "last_sentiment_score": None
-            }
-        
+            events_data = {"last_sentiment_score": None}
+
         # Evaluate rules
         evaluator = RuleEvaluator()
         result = evaluator.evaluate(signals_data, events_data)
-        
+
         # Normalize reasons/all_reasons and enforce prefix & length constraints
         all_reasons = result.get("all_reasons", result.get("reasons", [])) or []
         reasons = result.get("reasons", []) or []
@@ -130,7 +129,7 @@ async def evaluate_rules(
         if not isinstance(reasons, list):
             reasons = [str(reasons)]
         # Ensure reasons is always the prefix of all_reasons and max length 3
-        if not all_reasons or reasons != all_reasons[:len(reasons)]:
+        if not all_reasons or reasons != all_reasons[: len(reasons)]:
             reasons = all_reasons[:3]
         if len(reasons) > 3:
             reasons = reasons[:3]
@@ -138,10 +137,10 @@ async def evaluate_rules(
         missing = result.get("missing", []) or []
         if not isinstance(missing, list):
             missing = [str(missing)]
-        
+
         # Calculate latency
         latency_ms = int((time.time() - start_time) * 1000)
-        
+
         # Log successful evaluation
         log_json(
             stage="rules.eval",
@@ -156,9 +155,9 @@ async def evaluate_rules(
             latency_ms=latency_ms,
             refine_used=result.get("refine_used", False),
             request_id=request_id,
-            module="api.routes.rules"
+            module="api.routes.rules",
         )
-        
+
         # Build response
         response = {
             "event_key": event_key,
@@ -169,17 +168,17 @@ async def evaluate_rules(
             "evidence": {
                 "signals": signals_data,
                 "events": events_data,
-                "missing": missing
+                "missing": missing,
             },
             "meta": {
                 "rules_version": result["rules_version"],
                 "hot_reloaded": result["hot_reloaded"],
-                "refine_used": result.get("refine_used", False)
-            }
+                "refine_used": result.get("refine_used", False),
+            },
         }
-        
+
         return response
-        
+
     except HTTPException:
         # Re-raise HTTP exceptions
         raise
@@ -187,21 +186,20 @@ async def evaluate_rules(
         # Get truncated traceback
         tb_str = traceback.format_exc()
         # Truncate to single line, max 500 chars
-        tb_line = tb_str.replace('\n', ' ')[:500]
-        
+        tb_line = tb_str.replace("\n", " ")[:500]
+
         # Log error with full context
         log_json(
             stage="rules.eval_error",
             event_key=event_key,
             error=f"{type(e).__name__}: {str(e)}"[:200],
             traceback=tb_line,
-            rules_version=result.get("rules_version") if 'result' in locals() else None,
+            rules_version=result.get("rules_version") if "result" in locals() else None,
             request_id=request_id,
-            module="api.routes.rules"
+            module="api.routes.rules",
         )
-        
+
         # Return 500 error
         raise HTTPException(
-            status_code=500,
-            detail=f"Internal error evaluating rules: {str(e)}"
+            status_code=500, detail=f"Internal error evaluating rules: {str(e)}"
         )

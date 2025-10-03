@@ -1,4 +1,5 @@
 """HTTP API metrics instrumentation for outbound requests."""
+
 from __future__ import annotations
 
 import threading

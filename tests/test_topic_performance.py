@@ -3,11 +3,12 @@ Performance benchmarks for topic detection and aggregation.
 Tests latency, throughput, and resource usage.
 """
 
-import pytest
-import time
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
 import json
+import time
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 @pytest.mark.slow
@@ -32,7 +33,7 @@ class TestTopicPerformance:
         assert is_meme is True
         assert len(entities) > 0
 
-    @patch('worker.jobs.topic_signal_scan.get_db_session')
+    @patch("worker.jobs.topic_signal_scan.get_db_session")
     def test_scan_throughput(self, mock_get_session):
         """Test that scan can process 100 events under 500ms"""
         from worker.jobs.topic_signal_scan import scan_topic_signals
@@ -43,16 +44,22 @@ class TestTopicPerformance:
         # Create 100 mock events
         mock_events = []
         for i in range(100):
-            mock_events.append({
-                "event_key": f"event_{i:03d}",
-                "topic_id": f"t.hash{i % 10}",  # 10 different topics
-                "topic_entities": [f"entity{i}"],
-                "topic_confidence": 0.5 + (i % 5) * 0.1,
-                "last_ts": datetime.now(timezone.utc) - timedelta(minutes=i)
-            })
+            mock_events.append(
+                {
+                    "event_key": f"event_{i:03d}",
+                    "topic_id": f"t.hash{i % 10}",  # 10 different topics
+                    "topic_entities": [f"entity{i}"],
+                    "topic_confidence": 0.5 + (i % 5) * 0.1,
+                    "last_ts": datetime.now(timezone.utc) - timedelta(minutes=i),
+                }
+            )
 
-        mock_session.execute.return_value.mappings.return_value.fetchall.return_value = mock_events
-        mock_session.execute.return_value.mappings.return_value.fetchone.return_value = None
+        mock_session.execute.return_value.mappings.return_value.fetchall.return_value = (
+            mock_events
+        )
+        mock_session.execute.return_value.mappings.return_value.fetchone.return_value = (
+            None
+        )
         mock_session.execute.return_value.rowcount = 1
 
         start = time.perf_counter()
@@ -63,7 +70,7 @@ class TestTopicPerformance:
         assert result["success"] is True
         assert result["created"] == 100
 
-    @patch('worker.jobs.topic_aggregate.get_db_session')
+    @patch("worker.jobs.topic_aggregate.get_db_session")
     def test_aggregate_performance(self, mock_get_session):
         """Test that aggregate can process 1000 events under 1 second"""
         from worker.jobs.topic_aggregate import aggregate_topics
@@ -82,14 +89,18 @@ class TestTopicPerformance:
                 entities = [f"entity_{i}_{j}_{k}" for k in range(1 + (j % 3))]
                 entities_groups.append(entities)
 
-            mock_rows.append({
-                "topic_hash": f"t.hash{i:03d}",
-                "all_entities": entities_groups,
-                "mention_count": mention_count,
-                "latest_ts": datetime.now(timezone.utc) - timedelta(hours=i)
-            })
+            mock_rows.append(
+                {
+                    "topic_hash": f"t.hash{i:03d}",
+                    "all_entities": entities_groups,
+                    "mention_count": mention_count,
+                    "latest_ts": datetime.now(timezone.utc) - timedelta(hours=i),
+                }
+            )
 
-        mock_session.execute.return_value.mappings.return_value.fetchall.return_value = mock_rows
+        mock_session.execute.return_value.mappings.return_value.fetchall.return_value = (
+            mock_rows
+        )
 
         start = time.perf_counter()
         result = aggregate_topics()
@@ -120,8 +131,8 @@ class TestTopicPerformance:
 
     def test_concurrent_scans(self):
         """Test that multiple scans can run concurrently"""
-        from concurrent.futures import ThreadPoolExecutor
         import threading
+        from concurrent.futures import ThreadPoolExecutor
 
         # Track which threads executed
         thread_ids = set()
@@ -141,7 +152,7 @@ class TestTopicPerformance:
                 "success": True,
                 "created": 1,
                 "scan_id": scan_id,
-                "thread_id": threading.current_thread().ident
+                "thread_id": threading.current_thread().ident,
             }
 
         start = time.perf_counter()

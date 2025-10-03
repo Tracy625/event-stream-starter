@@ -1,11 +1,12 @@
 """Trace ID management using contextvars"""
+
 import uuid
-from contextvars import ContextVar
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Optional
 
 # Context variable for trace ID
-_trace_id_var: ContextVar[Optional[str]] = ContextVar('trace_id', default=None)
+_trace_id_var: ContextVar[Optional[str]] = ContextVar("trace_id", default=None)
 
 
 def get_trace_id() -> str:
@@ -30,7 +31,7 @@ def trace_ctx(trace_id: Optional[str] = None):
     else:
         trace_id = str(uuid.uuid4())
         token = _trace_id_var.set(trace_id)
-    
+
     try:
         yield trace_id
     finally:

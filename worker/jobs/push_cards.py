@@ -1,27 +1,29 @@
 """
 Unified card push worker for all card types
 """
-import os
+
 import json
+import os
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Any, Dict
 
 from celery import Task
 from celery.exceptions import MaxRetriesExceededError
+
 from api.cache import get_redis_client
 from api.cards.render_pipeline import render_and_push
-from api.utils.logging import log_json
+# Import metrics from centralized registry (no new registration here!)
+from api.core.metrics import cards_push_fail_total
 from api.database import with_db
-from api.db.models.push_outbox import PushOutbox, OutboxStatus
-
+from api.db.models.push_outbox import OutboxStatus, PushOutbox
+from api.utils.logging import log_json
 # Use same app instance as other workers
 from worker.app import app
 
-# Import metrics from centralized registry (no new registration here!)
-from api.core.metrics import cards_push_fail_total
 
 class CardPushTask(Task):
     """Custom task with exponential backoff"""
+
     autoretry_for = (Exception,)
     max_retries = 5
     default_retry_delay = 2  # Start with 2 seconds
@@ -29,7 +31,8 @@ class CardPushTask(Task):
     retry_backoff_max = 300  # Max 5 minutes
     retry_jitter = True  # Add jitter to prevent thundering herd
 
-@app.task(base=CardPushTask, bind=True, queue='cards')
+
+@app.task(base=CardPushTask, bind=True, queue="cards")
 def process_card(self, signal: Dict[str, Any], channel_id: str) -> Dict[str, Any]:
     """
     Process and push card with retry logic
@@ -49,22 +52,18 @@ def process_card(self, signal: Dict[str, Any], channel_id: str) -> Dict[str, Any
             stage="cards.worker.start",
             type=signal.get("type"),
             event_key=signal.get("event_key"),
-            attempt=signal["attempt"]
+            attempt=signal["attempt"],
         )
 
         # Call unified pipeline
-        result = render_and_push(
-            signal=signal,
-            channel_id=channel_id,
-            channel="tg"
-        )
+        result = render_and_push(signal=signal, channel_id=channel_id, channel="tg")
 
         if result.get("success"):
             log_json(
                 stage="cards.worker.success",
                 type=signal.get("type"),
                 event_key=signal.get("event_key"),
-                message_id=result.get("message_id")
+                message_id=result.get("message_id"),
             )
             return result
 
@@ -77,7 +76,7 @@ def process_card(self, signal: Dict[str, Any], channel_id: str) -> Dict[str, Any
             log_json(
                 stage="cards.worker.rate_limited",
                 retry_after=retry_after,
-                attempt=signal["attempt"]
+                attempt=signal["attempt"],
             )
             raise self.retry(countdown=retry_after)
 
@@ -86,9 +85,11 @@ def process_card(self, signal: Dict[str, Any], channel_id: str) -> Dict[str, Any
             log_json(
                 stage="cards.worker.client_error",
                 error_code=error_code,
-                error=result.get("error")
+                error=result.get("error"),
             )
-            cards_push_fail_total.inc({"type": signal.get("type", "unknown"), "code": "4xx"})
+            cards_push_fail_total.inc(
+                {"type": signal.get("type", "unknown"), "code": "4xx"}
+            )
             _send_to_dlq(signal, result)
             return result
 
@@ -97,9 +98,11 @@ def process_card(self, signal: Dict[str, Any], channel_id: str) -> Dict[str, Any
             log_json(
                 stage="cards.worker.server_error",
                 error_code=error_code,
-                attempt=signal["attempt"]
+                attempt=signal["attempt"],
             )
-            cards_push_fail_total.inc({"type": signal.get("type", "unknown"), "code": "5xx"})
+            cards_push_fail_total.inc(
+                {"type": signal.get("type", "unknown"), "code": "5xx"}
+            )
             raise self.retry()
 
         else:
@@ -107,9 +110,11 @@ def process_card(self, signal: Dict[str, Any], channel_id: str) -> Dict[str, Any
             log_json(
                 stage="cards.worker.network_error",
                 error=result.get("error"),
-                attempt=signal["attempt"]
+                attempt=signal["attempt"],
             )
-            cards_push_fail_total.inc({"type": signal.get("type", "unknown"), "code": "net"})
+            cards_push_fail_total.inc(
+                {"type": signal.get("type", "unknown"), "code": "net"}
+            )
             raise self.retry()
 
     except MaxRetriesExceededError:
@@ -117,19 +122,20 @@ def process_card(self, signal: Dict[str, Any], channel_id: str) -> Dict[str, Any
         log_json(
             stage="cards.worker.max_retries",
             type=signal.get("type"),
-            event_key=signal.get("event_key")
+            event_key=signal.get("event_key"),
         )
-        cards_push_fail_total.inc({"type": signal.get("type", "unknown"), "code": "max_retries"})
+        cards_push_fail_total.inc(
+            {"type": signal.get("type", "unknown"), "code": "max_retries"}
+        )
         _send_to_dlq(signal, {"error": "Max retries exceeded"})
         return {"success": False, "error": "Max retries exceeded"}
 
     except Exception as e:
         log_json(
-            stage="cards.worker.error",
-            error=str(e),
-            attempt=self.request.retries + 1
+            stage="cards.worker.error", error=str(e), attempt=self.request.retries + 1
         )
         raise
+
 
 def _send_to_dlq(signal: Dict[str, Any], result: Dict[str, Any]):
     """
@@ -149,14 +155,15 @@ def _send_to_dlq(signal: Dict[str, Any], result: Dict[str, Any]):
                 payload_json=signal,
                 status=OutboxStatus.DLQ.value,
                 attempt=int(signal.get("attempt", 0)),
-                last_error=json.dumps(result)
+                last_error=json.dumps(result),
             )
             db.add(row)
             db.flush()
 
-            log_json(stage="cards.dlq.saved", event_key=signal.get("event_key"), outbox_id=row.id)
+            log_json(
+                stage="cards.dlq.saved",
+                event_key=signal.get("event_key"),
+                outbox_id=row.id,
+            )
     except Exception as e:
-        log_json(
-            stage="cards.dlq.error",
-            error=str(e)
-        )
+        log_json(stage="cards.dlq.error", error=str(e))

@@ -1,4 +1,5 @@
 """HuggingFace sentiment helpers with online fallback and degradation metrics."""
+
 from __future__ import annotations
 
 import os
@@ -104,7 +105,9 @@ def _record_degrade(reason: str, path_label: str) -> None:
     hf_degrade_count.labels(reason, path_label).inc()
 
 
-def analyze_with_fallback(text: str, path_label: str = "script") -> Tuple[Dict[str, Any], int]:
+def analyze_with_fallback(
+    text: str, path_label: str = "script"
+) -> Tuple[Dict[str, Any], int]:
     """Attempt online inference, fall back to template on failure."""
     backend = (os.getenv("SENTIMENT_BACKEND") or "").lower()
 

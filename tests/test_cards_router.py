@@ -1,18 +1,19 @@
 """
 Test card routing with frozen time and deterministic randomness
 """
+
 import json
-import pytest
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 from freezegun import freeze_time
 
-from api.cards.registry import (
-    CARD_ROUTES, CARD_TEMPLATES,
-    normalize_card_type, UnknownCardTypeError
-)
-from api.cards.render_pipeline import render_and_push, check_template_exists
+from api.cards.registry import (CARD_ROUTES, CARD_TEMPLATES,
+                                UnknownCardTypeError, normalize_card_type)
+from api.cards.render_pipeline import check_template_exists, render_and_push
 from api.cards.transformers import to_pushcard
+
 
 @freeze_time("2025-01-15 12:00:00")
 class TestCardRouting:
@@ -53,7 +54,7 @@ class TestCardRouting:
             normalize_card_type("")
         assert "Card type cannot be empty" in str(exc.value)
 
-    @patch('api.cards.render_pipeline.check_template_exists')
+    @patch("api.cards.render_pipeline.check_template_exists")
     def test_generate_primary_card(self, mock_check):
         """Primary card generation with fixed time"""
         mock_check.return_value = True
@@ -66,7 +67,7 @@ class TestCardRouting:
             "risk_level": "yellow",
             "token_info": {"symbol": "TEST", "chain": "eth"},
             "risk_note": "Test risk",
-            "goplus_risk": "yellow"
+            "goplus_risk": "yellow",
         }
 
         now = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -79,17 +80,16 @@ class TestCardRouting:
         assert result["meta"]["event_key"] == "ETH:TOKEN:123"
         assert result["meta"]["template_base"] == "primary_card"
 
-    @patch('api.cards.render_pipeline.TelegramNotifier')
-    @patch('api.cards.render_pipeline.check_template_exists')
+    @patch("api.cards.render_pipeline.TelegramNotifier")
+    @patch("api.cards.render_pipeline.check_template_exists")
     def test_unknown_type_metrics(self, mock_check, mock_tg):
         """Unknown type increments metrics and logs"""
         mock_check.return_value = True
 
-        with patch('api.cards.render_pipeline.cards_unknown_type_count') as mock_metric:
-            with patch('api.cards.render_pipeline.log_json') as mock_log:
+        with patch("api.cards.render_pipeline.cards_unknown_type_count") as mock_metric:
+            with patch("api.cards.render_pipeline.log_json") as mock_log:
                 result = render_and_push(
-                    signal={"type": "invalid_type"},
-                    channel_id="-123456"
+                    signal={"type": "invalid_type"}, channel_id="-123456"
                 )
 
                 assert not result["success"]
@@ -118,28 +118,32 @@ class TestCardRouting:
                 "degrade": False,
                 "template_base": "nonexistent_template",
                 "latency_ms": None,
-                "diagnostic_flags": None
-            }
+                "diagnostic_flags": None,
+            },
         }
 
-        with patch('api.cards.render_pipeline.check_template_exists', return_value=False):
-            with patch('api.cards.render_pipeline.cards_render_fail_total') as mock_metric:
-                with patch('api.cards.render_pipeline.log_json') as mock_log:
+        with patch(
+            "api.cards.render_pipeline.check_template_exists", return_value=False
+        ):
+            with patch(
+                "api.cards.render_pipeline.cards_render_fail_total"
+            ) as mock_metric:
+                with patch("api.cards.render_pipeline.log_json") as mock_log:
                     text, is_degraded = render_template(payload, "tg")
 
                     assert is_degraded
                     assert "降级模式" in text
 
-                    mock_metric.inc.assert_called_with({
-                        "type": "test",
-                        "reason": "template_missing"
-                    })
+                    mock_metric.inc.assert_called_with(
+                        {"type": "test", "reason": "template_missing"}
+                    )
 
                     mock_log.assert_called_with(
                         stage="cards.template_missing",
                         template="nonexistent_template.tg.j2",
-                        type="test"
+                        type="test",
                     )
+
 
 class TestTransformers:
     """Test format transformations"""
@@ -156,7 +160,7 @@ class TestTransformers:
                 "token_info": {"symbol": "TEST"},
                 "risk_note": "Test note",
                 "verify_path": "/verify",
-                "data_as_of": "2025-01-15T12:00Z"
+                "data_as_of": "2025-01-15T12:00Z",
             },
             "meta": {
                 "type": "primary",
@@ -164,8 +168,8 @@ class TestTransformers:
                 "degrade": False,
                 "template_base": "primary_card",
                 "latency_ms": 100,
-                "diagnostic_flags": None
-            }
+                "diagnostic_flags": None,
+            },
         }
 
         result = to_pushcard(payload, "Test render", "tg")
@@ -180,6 +184,7 @@ class TestTransformers:
         assert result["rendered"]["tg"] == "Test render"
         assert result["states"]["degrade"] == False
 
+
 @freeze_time("2025-01-15 12:00:00")
 def test_snapshot_stability():
     """Template rendering produces stable snapshots"""
@@ -190,7 +195,7 @@ def test_snapshot_stability():
         "event_key": "SNAP:TEST:001",
         "risk_level": "yellow",
         "token_info": {"symbol": "SNAP", "chain": "eth"},
-        "risk_note": "Snapshot test"
+        "risk_note": "Snapshot test",
     }
 
     # Fixed time for reproducibility

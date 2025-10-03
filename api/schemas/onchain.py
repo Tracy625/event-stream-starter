@@ -1,12 +1,15 @@
 """Onchain feature schemas"""
+
 from datetime import datetime
-from typing import Optional, Dict, Union
 from decimal import Decimal
+from typing import Dict, Optional, Union
+
 from pydantic import BaseModel, Field
 
 
 class WindowFeatures(BaseModel):
     """Features for a specific time window"""
+
     addr_active: Optional[int] = None
     tx_count: Optional[int] = None
     growth_ratio: Optional[Union[Decimal, float]] = None
@@ -14,15 +17,14 @@ class WindowFeatures(BaseModel):
     self_loop_ratio: Optional[Union[Decimal, float]] = None
     calc_version: int
     as_of_ts: datetime
-    
+
     class Config:
-        json_encoders = {
-            Decimal: float
-        }
+        json_encoders = {Decimal: float}
 
 
 class OnchainFeaturesResponse(BaseModel):
     """Response for onchain features endpoint"""
+
     chain: str
     address: str
     data_as_of: Optional[datetime] = None
