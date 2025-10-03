@@ -151,6 +151,61 @@ make logs worker    # Worker only
 
 ---
 
+## 🌐 Language & Localization
+
+### Chinese Language Usage
+
+This project was originally developed for Chinese-speaking users and contains Chinese text in several places:
+
+**📱 Notification Messages (Telegram/Slack)**
+- Alert messages and event summaries are currently in **Chinese**
+- Message templates are located in `templates/cards/` (Jinja2 templates)
+- **To customize**: Edit template files to change notification language and format
+- Example: `templates/cards/primary_card.ui.j2`, `templates/cards/secondary_card.ui.j2`
+
+**📋 Rule Descriptions**
+- Scoring rule reasons in `rules/rules.yml` are in Chinese
+- Example: `"高风险代币（GoPlus Red）"` → `"High-risk token (GoPlus Red)"`
+- **To customize**: Edit `rules/rules.yml` and update the `reason:` fields
+
+**📊 Code Comments**
+- Some inline comments and docstrings are in Chinese
+- This does **not** affect functionality
+- **Optional**: Translate comments for your team's preference
+
+**🔧 Configuration**
+- Config files use English keys with Chinese comments
+- Field names and API responses are in English
+- **No changes needed** for English-speaking users
+
+### Internationalization (i18n)
+
+If you need full multilingual support:
+
+1. **For notifications**: Create language-specific template directories
+   ```
+   templates/cards/
+   ├── en/  # English templates
+   ├── zh/  # Chinese templates
+   └── es/  # Spanish templates
+   ```
+
+2. **For rules**: Add a `locale` parameter to rule definitions
+   ```yaml
+   rules:
+     - condition: "goplus_risk == 'red'"
+       score: -10
+       reason:
+         en: "High-risk token (GoPlus Red)"
+         zh: "高风险代币（GoPlus Red）"
+   ```
+
+3. **For API responses**: Use Accept-Language header parsing
+
+**Note**: The current codebase prioritizes functionality over i18n. Language customization is straightforward but requires manual template editing.
+
+---
+
 ## 📊 Architecture
 
 ```mermaid
